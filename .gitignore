@@ -1,0 +1,5 @@
+.ionide
+.merlin
+.tmp
+.vscode
+_build
