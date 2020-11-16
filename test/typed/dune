@@ -1,0 +1,6 @@
+(executable
+ (name typed_test)
+ (libraries
+  alcotest
+  typed
+))

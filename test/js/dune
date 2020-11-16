@@ -1,0 +1,9 @@
+(executable
+ (name js_test)
+ (libraries
+  alcotest
+  js
+  typed
+  make
+  base
+))

@@ -1,0 +1,3 @@
+(library
+ (name js)
+ (libraries base stdio typed common))

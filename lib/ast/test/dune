@@ -1,0 +1,3 @@
+(executable
+ (name ast_test)
+ (libraries alcotest parlex ast))

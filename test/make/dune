@@ -1,0 +1,6 @@
+(executable
+ (name make_test)
+ (libraries
+  alcotest
+  make
+))

@@ -1,0 +1,6 @@
+(executable
+ (name parlex_test)
+ (libraries
+  alcotest
+  parlex
+))

@@ -1,0 +1,6 @@
+(executable
+ (name build_test)
+ (libraries
+  alcotest
+  build
+))

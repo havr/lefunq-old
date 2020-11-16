@@ -1,0 +1,3 @@
+(executable
+ (name lefunq)
+ (libraries base stdio cli make))
