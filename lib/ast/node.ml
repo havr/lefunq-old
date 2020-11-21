@@ -6,21 +6,59 @@ module Arg = struct
     and arg = Ident of ident | Tuple of tuple
     type args = {args: arg list}
 end
-
-type int_ = {int_pos: Pos.t; int: string}
-type str_ = {str_pos: Pos.t; str: string}
-type ident = {ident_pos: Pos.t; ident: string}
-type value = IntValue of int_ | StrValue of str_ | IdentValue of ident | LambdaValue of lambda
-
-(* TODO: s/params/args *)
-(* TODO: s/cond_expr/cond_block *)
-and cond = { cond_expr: expr_or_block; cond_then: expr_or_block; cond_else: expr_or_block option }
-(* TODO: better name *)
-and expr_or_block = Expr of expr | Block of block
-and lambda = {lambda_args: Arg.args; lambda_block: block}
-and apply = { apply_fn: expr; apply_args: expr list }
-and expr = ValueExpr of value | ApplyExpr of apply | CondExpr of cond
-and block_stmt = ExprStmt of expr | LetStmt of let_ | BlockStmt of block
-and block = {block_start_pos: Pos.t; block_end_pos: Pos.t; block_stmts: block_stmt list}
-and let_expr = LetExpr of expr | LetBlock of block
-and let_ = {let_pos: Pos.t; let_args: Arg.args option; let_ident: ident; let_expr: let_expr}
+module rec Int: sig 
+    type t = {pos: Pos.t; value: string}
+end = struct 
+    type t = {pos: Pos.t; value: string}
+end
+and Str: sig
+    type t = {pos: Pos.t; value: string}
+end = struct 
+    type t = {pos: Pos.t; value: string}
+end
+and Ident: sig
+    type t = {pos: Pos.t; value: string}
+end = struct 
+    type t = {pos: Pos.t; value: string}
+end
+and Lambda: sig
+    type t = {args: Arg.args; block: Block.t}
+end = struct 
+    type t = {args: Arg.args; block: Block.t}
+end
+and Let: sig
+    type expr = Expr of Expr.t | Block of Block.t
+    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr}
+end = struct 
+    type expr = Expr of Expr.t | Block of Block.t
+    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr}
+end
+and Block: sig
+    type block_stmt = Expr of Expr.t | Let of Let.t | Block of Block.t
+    type t = {start_pos: Pos.t; end_pos: Pos.t; stmts: block_stmt list}
+end = struct 
+    type block_stmt = Expr of Expr.t | Let of Let.t | Block of Block.t
+    type t = {start_pos: Pos.t; end_pos: Pos.t; stmts: block_stmt list}
+end
+and Cond: sig
+    type expr = Expr of Expr.t | Block of Block.t
+    type t = {if_: expr; then_: expr; else_: expr option}
+end = struct 
+    type expr = Expr of Expr.t | Block of Block.t
+    type t = {if_: expr; then_: expr; else_: expr option}
+end
+and Apply: sig
+    type t = { fn: Expr.t; args: Expr.t list }
+end = struct 
+    type t = { fn: Expr.t; args: Expr.t list }
+end
+and Value: sig
+    type t = Int of Int.t | Str of Str.t | Ident of Ident.t | Lambda of Lambda.t
+end = struct 
+    type t = Int of Int.t | Str of Str.t | Ident of Ident.t | Lambda of Lambda.t
+end
+and Expr: sig
+    type t = Value of Value.t | Apply of Apply.t | Cond of Cond.t
+end = struct 
+    type t = Value of Value.t | Apply of Apply.t | Cond of Cond.t
+end

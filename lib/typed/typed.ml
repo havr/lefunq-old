@@ -3,120 +3,155 @@ exception Todo of string
 
 type type_ = string
 
-(* type tpe = 
-    | Value of string
-    | Lambda of (tpe * tpe)
-    | Tuple of (tpe list) *)
-
-type int_value = {int_value: string}
-type str_value= {str_value: string}
-
-type ident_value = {ident_type: string; local_name: string}
-
-type basic = {basic_value: string; basic_type: string}
-
-
-
-module Elem = struct 
-    module Arg = struct 
-        type arg = { arg: string }
-        type args = arg list
-    end
-
-    type apply = {
-        apply_fn: expr;
-        apply_args: expr list
+module rec Cond: sig 
+    type case = {
+        if_: Block.t;
+        then_: Block.t
     }
-    (* TODO: collapse if-else's (as a part of optimization?) *)
-    and cond = {
-        cond_block: block;
-        cond_then: block;
-        cond_else: block option;
+    and t = {
+        cases: case list;
+        else_: Block.t option;
     }
-    and expr = BasicExpr of basic | IdentExpr of ident_value | ApplyExpr of apply | LambdaExpr of lambda | CondExpr of cond
-    and let_ = {
-        let_ident: ident_value;
-        let_block: block 
+end = struct 
+    type case = {
+        if_: Block.t;
+        then_: Block.t
     }
-    and block_stmt = ExprStmt of expr | LetStmt of let_ | BlockStmt of block
-    and block = { block_stmts: block_stmt list }
-    and lambda = {
-        lambda_args: Arg.args;
-        lambda_block: block;
+    and t = {
+        cases: case list;
+        else_: Block.t option;
     }
+end
+and Apply: sig
+    type t = { fn: Expr.t; args: Expr.t list }
+end = struct 
+    type t = { fn: Expr.t; args: Expr.t list }
+end
+and Value: sig
+    type t = {value: string; type_: string}
+end = struct 
+    type t = {value: string; type_: string}
+end
+and Ident: sig 
+    type t = {name: string; type_: string}
+end = struct 
+    type t = {name: string; type_: string}
+end
+and Let: sig 
+    type t = {
+        ident: Ident.t;
+        block: Block.t 
+    }
+end = struct 
+    type t = {
+        ident: Ident.t;
+        block: Block.t 
+    }
+end
+and Stmt: sig 
+    type t = Expr of Expr.t | Let of Let.t | Block of Block.t
+end = struct 
+    type t = Expr of Expr.t | Let of Let.t | Block of Block.t
+end
+and Block: sig 
+    type t = {stmts: Stmt.t list}
+end = struct 
+    type t = {stmts: Stmt.t list}
+end
+and Lambda: sig 
+    type t = {
+        args: Arg.args;
+        block: Block.t;
+    }
+end = struct 
+    type t = {
+        args: Arg.args;
+        block: Block.t;
+    }
+end
+and Expr: sig 
+    type t = Value of Value.t | Ident of Ident.t | Apply of Apply.t | Lambda of Lambda.t | Cond of Cond.t
+end = struct 
+    type t = Value of Value.t | Ident of Ident.t | Apply of Apply.t | Lambda of Lambda.t | Cond of Cond.t
+end
+
+and Arg: sig 
+    type t = { arg: string }
+    type args = t list
+end = struct 
+    type t = { arg: string }
+    type args = t list
 end
 
 module Transform = struct
     open Ast
 
-    open Elem
     open Common
     (* TODO: remove these transform_ prefixes *)
     (* TODO: move Int / Str to constants *)
     let args args = 
         match args with
-        | [] -> [Elem.Arg.{arg = "_"}]
+        | [] -> [Arg.{arg = "_"}]
         | some -> some |> List.map (function
-            | Node.Arg.Ident m -> Elem.Arg.{arg = m.ident}
+            | Node.Arg.Ident m -> Arg.{arg = m.ident}
             | Node.Arg.Tuple m -> begin
                 match m.tuple with
-                | [] -> Elem.Arg.{arg = "_"}
+                | [] -> Arg.{arg = "_"}
                 | _ -> raise (Todo "implement tuples")
             end) 
 
     let rec transform_apply apply = 
-        let fn = expr Node.(apply.apply_fn) in
-        let args = List.map expr Node.(apply.apply_args) in
-            {apply_fn=fn; apply_args=args}
+        let fn = expr Node.Apply.(apply.fn) in
+        let args = List.map expr Node.Apply.(apply.args) in
+            Apply.{fn=fn; args=args}
     and value = function
-        | Node.IntValue v -> BasicExpr {basic_value = v.int; basic_type = Const.BasicTypes.int}
-        | Node.StrValue v -> BasicExpr {basic_value = v.str; basic_type = Const.BasicTypes.str}
-        | Node.IdentValue v -> IdentExpr {local_name = v.ident; ident_type = "unknown"}
-        | Node.LambdaValue v -> 
-            let b = block v.lambda_block in
-            let a = args v.lambda_args.args in
-                LambdaExpr(Elem.{lambda_args = a; lambda_block = b})
+        | Node.Value.Int v -> Expr.Value (Value.{value = v.value; type_ = Const.BasicTypes.int})
+        | Node.Value.Str v -> Expr.Value (Value.{value = v.value; type_ = Const.BasicTypes.str})
+        | Node.Value.Ident v -> Expr.Ident (Ident.{name = v.value; type_ = "unknown"})
+        | Node.Value.Lambda v -> 
+            let b = block v.block in
+            let a = args v.args.args in
+                Expr.Lambda (Lambda.{args = a; block = b})
         
     and cond n = 
         let expr_or_block = function
             (* TODO: variable names *)
-            | Node.Expr e -> {block_stmts = [ExprStmt (expr e)]}
-            | Node.Block b -> block b
+            | Node.Cond.Expr e -> Block.{stmts = [Stmt.Expr (expr e)]}
+            | Node.Cond.Block b -> block b
         in
-        let if_block  = expr_or_block Node.(n.cond_expr) in
-        let then_block = expr_or_block n.cond_then in
-        let else_block = n.cond_else |> Option.map expr_or_block in
-            Elem.{cond_block = if_block; cond_then = then_block; cond_else = else_block}
-
+        let case = Cond.{if_ = expr_or_block Node.Cond.(n.if_); then_ = expr_or_block Node.Cond.(n.then_)} in
+        match n.else_ with
+        | None ->
+            Cond.{cases = [case]; else_ = None}
+        | Some (Node.Cond.Expr (Node.Expr.Cond e)) ->
+                let result = cond e in 
+                {result with cases = case :: result.cases}
+        | Some m -> Cond.{cases = [case]; else_ = Some (expr_or_block m)}
     and expr expr = 
         let expr' = match expr with
-            | Node.ValueExpr v -> value v
-            | Node.ApplyExpr app -> ApplyExpr (transform_apply app)
-            | Node.CondExpr n -> CondExpr (cond n)
+            | Node.Expr.Value v -> value v
+            | Node.Expr.Apply app -> Expr.Apply (transform_apply app)
+            | Node.Expr.Cond n -> Expr.Cond (cond n)
         in
             expr'
     and block_stmt = function
-        | Node.ExprStmt e -> ExprStmt (expr e)
-        | Node.BlockStmt b -> BlockStmt (block b)
-        | Node.LetStmt t -> LetStmt (let_ t)
-    and block b = {block_stmts = (List.map block_stmt b.block_stmts)}
-    and let_expr (ast_block: Node.let_expr) = 
-        let open Elem in 
-        match ast_block with
-        | Node.LetExpr v -> {block_stmts = [ExprStmt (expr v)]}
-        | Node.LetBlock e -> block e
-    and let_ let_ = 
-        let t_ident = {ident_type = "unknown"; local_name = let_.let_ident.ident} in
+        | Node.Block.Expr e -> Stmt.Expr (expr e)
+        | Node.Block.Block b -> Stmt.Block (block b)
+        | Node.Block.Let t -> Stmt.Let (let_ t)
+    and block b = Block.{stmts = (List.map block_stmt b.stmts)}
+    and let_expr = function
+        | Node.Let.Expr v -> Block.{stmts = [Stmt.Expr (expr v)]}
+        | Node.Let.Block e -> block e
+    and let_ n = 
+        let t_ident = Ident.{type_ = "unknown"; name = n.ident.value} in
         let t_expr = 
-        match let_.let_args with
-            | Some a -> {
-                block_stmts = [
-                    ExprStmt(
-                        LambdaExpr(Elem.{lambda_args = (args a.args); lambda_block = let_expr(let_.let_expr)})
-                    )]
-                }
-            | None -> let_expr Node.(let_.let_expr)
+        match Node.Let.(n.args) with
+            | Some a ->
+                Block.{stmts = [
+                    Stmt.Expr(Expr.Lambda(Lambda.{args = (args a.args); block = let_expr (n.expr)}))
+                ]}
+            | None -> let_expr Node.Let.(n.expr)
         in
-        {let_ident = t_ident; let_block = t_expr}
+        Let.{ident = t_ident; block = t_expr}
 end
 

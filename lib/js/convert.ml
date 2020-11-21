@@ -1,10 +1,3 @@
-open Common
-open Typed
-
-let ident ident = Ast.{ident_value = ident.local_name}
-(*let convert_int int = Ast.{num_value = int.value.int_value}
-
-let convert_str str = Ast.{str_value = Typed.(str.value.str_value) } *)
 let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"]
 let is_js_operator ident = List.exists ((=) ident) js_operators
 
@@ -12,98 +5,117 @@ exception Unreachable
 
 exception Unexpected of string
 
-let basic basic = 
-    if basic.basic_type = Const.BasicTypes.str then 
-        Ast.Str Ast.{str_value = Typed.(basic.basic_value)}
-    else if basic.basic_type = Const.BasicTypes.int then 
-        Ast.Num Ast.{num_value = Typed.(basic.basic_value)}
-    else
-        raise @@ Unexpected ("unknown basic type: " ^ basic.basic_type ^ "(has value: " ^ basic.basic_value ^ ")")
+(* TODO: move into common/utils *)
+let find_idx fn list = 
+    let rec find_idx' n = function
+        | [] -> None
+        | x :: rest -> if fn x then Some n else find_idx' (n + 1) rest
+    in find_idx' 0 list
+
+let binary_op_precedence = [["+"; "-"]; ["*"; "/"]; [">"; "<"; "<="; ">="; "=="]]
+let get_precedence op = 
+    find_idx (fun list -> List.find_opt(fun v -> v = op) list |> Option.is_some) (binary_op_precedence) 
+    |> Option.value ~default:(-1)
+
+let ident n = Ast.Ident.{value = Typed.Ident.(n.name)}
+
+let basic b =
+    if Typed.Value.(b.type_) = Common.Const.BasicTypes.str 
+        then Ast.Expr.Str(Ast.Str.{value = b.value})
+    else if Typed.Value.(b.type_) = Common.Const.BasicTypes.int 
+        then Ast.Expr.Num(Ast.Num.{value = b.value})
+    else raise @@ Unexpected ("unexpected basic type: " ^ b.type_ ^ "(has value: " ^ b.value ^ ")")
 
 let rec apply n = begin
     let apply_seq fn = function
     | [] -> raise @@ Unexpected "apply has no arguments"
     | first :: rest ->
-        let init = Ast.Apply (Ast.{
-            apply_fn=fn;
-            apply_args=[expr first]
+        let init = Ast.Expr.Apply(Ast.Apply.{
+            fn=fn;
+            args=[expr first]
         }) in
         Base.List.fold ~init: init ~f:(fun acc arg ->
-            Ast.Apply (Ast.{
-                apply_fn=acc;
-                apply_args=[expr arg]
+            Ast.Expr.Apply(Ast.Apply.{
+                fn=acc;
+                args=[expr arg]
             })
         ) rest
     in
-    match Elem.(n.apply_fn) with 
-    | Elem.IdentExpr m -> 
-        let local_name = m.local_name in
-        if is_js_operator local_name then
-            match n.apply_args with
-            | [unary] -> Ast.Unary (Ast.{unary_op = local_name; unary = expr unary})
+    match Typed.Apply.(n.fn) with 
+    | Typed.Expr.Ident m -> 
+        let local_name = m.name in
+        if not @@ is_js_operator local_name then
+            apply_seq (Ast.Expr.Ident (ident m)) n.args
+        else begin
+            match n.args with
+            | [unary] -> Ast.Expr.Unary (Ast.Unary.{op = local_name; expr = expr unary})
             | [left; right] ->
-                print_endline local_name;
-                Ast.Binary (Ast.{binary_op = local_name; binary_left = expr left; binary_right = expr right})
+                let wrap_parens node = match node with 
+                | Ast.Expr.Binary b -> 
+                    if get_precedence (b.op) < get_precedence (local_name) then
+                        Ast.Expr.Parens node
+                    else node
+                | _ -> node
+                in
+                let left_ast = wrap_parens @@ expr left in
+                let right_ast = wrap_parens @@ expr right in
+                Ast.Expr.Binary(Ast.Binary.{op = local_name; left = left_ast; right = right_ast})
             | _ -> raise Unreachable
-        else apply_seq (Ast.Ident (ident m)) n.apply_args
-    | _ ->
-        apply_seq (expr n.apply_fn) n.apply_args
+        end
+    | _ -> apply_seq (expr n.fn) n.args
 
 end and expr  = function
-    | BasicExpr m -> basic m
-    | IdentExpr m -> Ident (ident m)
-    | ApplyExpr m -> apply m
-    | LambdaExpr m -> lambda m
-    | CondExpr m -> cond m
+    | Typed.Expr.Value m -> basic m
+    | Typed.Expr.Ident m -> Ast.Expr.Ident (ident m)
+    | Typed.Expr.Apply m -> apply m
+    | Typed.Expr.Lambda m -> lambda m
+    | Typed.Expr.Cond m -> cond m
 and cond n = 
-    let cond_expr = match n.cond_block.block_stmts with
-    | single_stmt :: [] -> begin 
-        match single_stmt with
-        | Elem.ExprStmt e -> expr e
-        | _ -> Ast.Block (block Elem.(n.cond_block))
-    end
-    | _ -> Ast.Block (block n.cond_block)
+    let cond_expr = function 
+        | (Typed.Stmt.Expr e) :: [] -> expr e 
+        | b -> Block (block b)
     in
-    let cond_then = block Elem.(n.cond_then) in
-    let cond_else = n.cond_else |> Option.map block in
-        Block Ast.{ block_stmts=[ CondStmt Ast.{ cond_expr = cond_expr; cond_then = cond_then; cond_else = cond_else} ] }
+    let conds = Typed.Cond.(n.cases) |> List.map(fun Typed.Cond.{if_; then_} ->
+        let if_ = cond_expr if_.stmts in
+        let then_ = block then_.stmts in
+        Ast.Cond.{if_ = if_; then_ = then_.stmts}
+    ) in let cond_block = Ast.Block.Cond Ast.Cond.{
+        conds=conds; else_ = n.else_ |> Option.map (fun m  -> Typed.Block.(block m.stmts).stmts)
+    }
+    in Ast.Expr.Block(Ast.Block.{stmts=[cond_block]})
 and lambda n = 
     let open Base in
-    match n.lambda_args |> List.rev with
+    match Typed.Lambda.(n.args) |> List.rev with
     | [] -> raise (Unexpected "lambda without arguments")
     | first :: rest -> 
         let convert_arg = function
             | "_" -> []
             | a -> [a]
         in
-        let inner_lambda = Ast.Lambda({lambda_args = convert_arg first.arg; lambda_block = block (n.lambda_block)}) in
-        List.fold ~init: inner_lambda ~f: (fun inner arg -> 
-            Ast.Lambda({lambda_args = convert_arg arg.arg; lambda_block = {block_stmts = [Ast.ReturnStmt {return_expr=inner}]}})
-        ) rest
+        let inner_lambda = Ast.Lambda.{args = convert_arg first.arg; block = block (n.block.stmts)} in
+        Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner arg -> 
+            Ast.Lambda.{args = convert_arg arg.arg; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
+        ) rest)
 
 and block_stmt = function
-    | Elem.ExprStmt n -> Ast.ExprStmt (expr n)
-    | Elem.BlockStmt n -> Ast.BlockStmt (block n)
-    | Elem.LetStmt n -> Ast.ConstStmt (let_ n)
+    | Typed.Stmt.Expr n -> Ast.Block.Expr (expr n)
+    | Typed.Stmt.Block n -> Ast.Block.Block (block n.stmts)
+    | Typed.Stmt.Let n -> Ast.Block.Const (let_ n)
 
 and block n =
     let map_block_stmt len idx stmt = 
         if idx == len - 1 then 
             match stmt with
-            | Elem.ExprStmt n -> Ast.ReturnStmt { return_expr = expr n }
+            | Typed.Stmt.Expr n -> Ast.Block.Return Ast.Return.{ expr = expr n }
             | _ -> block_stmt stmt
         else block_stmt stmt
-    in Ast.{ block_stmts = List.mapi (map_block_stmt (List.length n.block_stmts)) Elem.(n.block_stmts) }
+    in Ast.Block.{ stmts = List.mapi (map_block_stmt (List.length n)) (n) }
 
 and let_ n = 
     let const_expr = 
-        match n.let_block.block_stmts with
-        | [stmt] -> begin 
-            match stmt with
-            | Elem.ExprStmt m -> Ast.ConstExpr (expr m)
-            | _ -> Ast.ConstBlock (block n.let_block)
-        end
-        | _ -> Ast.ConstBlock (block n.let_block)
-    in Ast.{ name = Elem.(n.let_ident.local_name); const_expr = const_expr }
+        match Typed.Block.(n.block.stmts) with
+        | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr m)
+        | _ -> Ast.Const.Block  (block n.block.stmts)
+    in Ast.Const.{ name = (n.ident.name); expr = const_expr }
 
     

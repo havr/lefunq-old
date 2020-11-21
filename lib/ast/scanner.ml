@@ -10,7 +10,7 @@ let identEnd = Base.String.concat ["_"; alpha; digit]
 
 let double_quote = char "\""
 
-let next = Parlex.Lexer.Matcher.next [
+let next = Parlex.Lexer.Matcher.next_match [
     ((fun _ -> Comment), 
         (* move "not char" into combinator *)
         seq [str "//"; (many @@ not @@ char "\n")]);
@@ -25,9 +25,6 @@ let next = Parlex.Lexer.Matcher.next [
         str "then");
     ((fun _ -> Else), 
         str "else");
-    ((fun s -> Ident s), 
-        seq [char identStart; many (char identEnd)]
-    );
     ((fun _ -> LineBreak), 
         oneMore (char "\n"));
     ((fun _ -> Whitespace), 
@@ -53,7 +50,10 @@ let next = Parlex.Lexer.Matcher.next [
     ((fun _ -> Lambda), 
         char "\\");
     ((fun op -> Op op),
-        choice [str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"])
+        choice [str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"]);
+    ((fun s -> Ident s), 
+        seq [char identStart; many (char identEnd)]
+    );
 ]
 
 let keep = function

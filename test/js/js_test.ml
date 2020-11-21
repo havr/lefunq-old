@@ -11,15 +11,17 @@ let run cmds =
 
 let execute code = 
     let memfs = Make.Fs.mem () in
-    memfs.write "src.lef" code;
-    match Make.make ~fs:memfs "src.lef" "dst.js" with
+    memfs.write "src.lf" code;
+    match Make.make ~fs:memfs "src.lf" "dst.js" with
     | Ok () -> 
         (* TODO: cleanup, unique tmp file name *)
         (* TODO: cleanup *)
         File.write "./tmp.js" (memfs.read "dst.js" |> Option.get);
         print_endline (memfs.read "dst.js" |> Option.get);
         Ok(run ["node"; "./tmp.js"])
-    | Error e -> Error(e)
+    | Error e -> 
+        print_endline (memfs.read "dst.js" |> Option.value ~default: "");
+        Error(e)
 
 module EndToEnd = struct 
     type test = {
@@ -30,7 +32,8 @@ module EndToEnd = struct
 
     let alcotest case () =
         match execute case.code with
-        | Error e -> Alcotest.fail ("failed with: " ^ e.msg)
+        | Error e -> 
+            Alcotest.fail (Format.sprintf "failed at %s: %s" (Pos.to_str e.pos) e.msg)
         | Ok lines -> 
             let got = String.concat "\n" lines in
             if got <> case.expect then begin 
@@ -69,6 +72,19 @@ let () = ignore @@ EndToEnd.define "lambdas" [
             }
         |}
     }; *)
+    (* move into "if" *)
+    {
+        name = "comparison";
+        expect = "more\nless\nequal";
+        code = {|
+            let if_chain n = if n > 0 then "more" else if n < 0 then "less" else "equal"
+            let main () = {
+                println (if_chain 1)
+                println (if_chain (-1))
+                println (if_chain 0)
+            }
+        |}
+    };
     (* move into "exprs" *)
     {
         name = "factorial";
@@ -82,13 +98,23 @@ let () = ignore @@ EndToEnd.define "lambdas" [
             let main () = println (fact 6)
         |}
     };
-    (* {
-        name = "test";
-        expect = "42";
+
+    (* todo: move out into "parens" tests *)
+    {
+        name = "js is precedence-aware when it puts parens";
+        expect = "189";
         code = {|
-            let main () = println (2 + (2 + 2) * 10)
+            let main () = println ((1 + 2) * (3 + 4) * (4 + 5))
         |}
-    }; *)
+    };
+    {
+        name = "parses multiple parens correctly";
+        expect = "triple_parens";
+        code = {|
+            let main () = println ((("triple_parens")))
+        |}
+    };
+    (* 123123 *)
     {
         name = "test";
         expect = "hello, world";

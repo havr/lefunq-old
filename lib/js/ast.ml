@@ -1,22 +1,3 @@
-
-(* TODO: name -> const_name, const_block *)
-type const = { name: string; const_expr: const_expr }
-(* TODO: r/const_expr/expr_block? *)
-and const_expr = ConstExpr of expr | ConstBlock of block
-and str = { str_value: string }
-and num = { num_value: string }
-and ident = { ident_value: string }
-and unary = { unary_op: string; unary: expr }
-and binary = { binary_op: string; binary_left: expr; binary_right: expr}
-and apply = { apply_fn: expr; apply_args: expr list}
-and expr = Num of num | Str of str | Unary of unary | Binary of binary | Apply of apply | Ident of ident | Lambda of lambda | Block of block
-and return = { return_expr: expr }
-and block_stmt = ExprStmt of expr | ConstStmt of const | BlockStmt of block | ReturnStmt of return | CondStmt of cond
-and block = { block_stmts: block_stmt list }
-and lambda = { lambda_args: string list; lambda_block: block }
-(* TODO: reusing const_expr for now, but let's switch to expr_or_block or expr_block *)
-and cond = { cond_expr: expr; cond_then: block; cond_else: block option}
-
 module Printer = struct
     type t = {buffer: Buffer.t; ident_sample: string; curr_ident: string; mutable newlined: bool}
 
@@ -50,84 +31,187 @@ module Printer = struct
         seq fns {printer with curr_ident = printer.curr_ident ^ printer.ident_sample}
 end
 
+(* TODO: command *)
+exception Unexpected of string
+
+module rec Const: sig 
+    type expr = Expr of Expr.t | Block of Block.t
+    and t = {name: string; expr: expr}
+end = struct 
+    type expr = Expr of Expr.t | Block of Block.t
+    and t = {name: string; expr: expr}
+end
+and Str: sig 
+    type t = {value: string}
+end = struct
+    type t = {value: string}
+end
+
+and Num: sig 
+    type t = {value: string}
+end = struct
+    type t = {value: string}
+end
+
+and Ident: sig 
+    type t = {value: string}
+end = struct
+    type t = {value: string}
+
+    (* let from_ir ir = {value = Typed.(ir.local_name)} *)
+end
+
+and Unary: sig 
+    type t = { op: string; expr: Expr.t }
+end = struct
+    type t = { op: string; expr: Expr.t }
+end
+
+and Binary: sig 
+    type t = { op: string; left: Expr.t; right: Expr.t} 
+end = struct
+    type t = { op: string; left: Expr.t; right: Expr.t} 
+end
+
+and Apply: sig 
+    type t = { fn: Expr.t; args: Expr.t list}
+end = struct
+    type t = { fn: Expr.t; args: Expr.t list}
+end
+and Lambda: sig 
+    type t = {args: string list; block: Block.t}
+end = struct
+    type t = {args: string list; block: Block.t}
+end
+
+and Block: sig 
+    type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t
+    and t = {stmts: stmt list}
+end = struct
+    type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t
+    and t = {stmts: stmt list}
+end
+
+and Expr: sig 
+    type t = 
+        | Num of Num.t 
+        | Str of Str.t 
+        | Unary of Unary.t 
+        | Binary of Binary.t 
+        | Apply of Apply.t 
+        | Ident of Ident.t 
+        | Lambda of Lambda.t 
+        | Block of Block.t 
+        | Parens of Expr.t
+end = struct
+    type t = 
+        | Num of Num.t 
+        | Str of Str.t 
+        | Unary of Unary.t 
+        | Binary of Binary.t 
+        | Apply of Apply.t 
+        | Ident of Ident.t 
+        | Lambda of Lambda.t 
+        | Block of Block.t 
+        | Parens of Expr.t
+end
+
+and Return: sig 
+    type t = {expr: Expr.t}
+end = struct
+    type t = {expr: Expr.t}
+end
+
+and Cond: sig 
+    type cond = {if_: Expr.t; then_: Block.stmt list}
+    type t = {conds: cond list; else_: Block.stmt list option}
+end = struct
+    type cond = {if_: Expr.t; then_: Block.stmt list}
+    type t = {conds: cond list; else_: Block.stmt list option}
+end
+
+module From = struct 
+end
+
 let separate sep list = match list with 
    | [] -> []
    | first :: rest -> 
         first :: (rest |> List.map (fun item -> [sep; item]) |> List.flatten)
-
-module Print = struct 
+module Prn = struct
     open Printer
-    let num n = str n.num_value 
-    let ident n = str n.ident_value
-    (* rename printer methods *)
-    let str_ n = str ("\"" ^ n.str_value ^ "\"") 
+
+    let ident n = str Ident.(n.value)
+    let num n = str Num.(n.value)
+    let string n = 
+        str ("\"" ^ Str.(n.value) ^ "\"") 
+
     let rec const n = 
-        let const_block = match n.const_expr with
-            | ConstExpr m -> expr m
-            | ConstBlock m -> block m
-        in Printer.separated [
+        let const_block = match Const.(n.expr) with
+            | Const.Expr m -> expr m
+            | Const.Block m -> block m
+        in 
+        separated [
             (str "const");
             (str n.name);
             (str "=");
             const_block 
         ]
+    and cond n =
+        let ifs = (Cond.(n.conds) |> List.map(fun Cond.{if_; then_} -> 
+            seq[str "if ("; expr if_; str ") {"; newline; stmts then_; str "}"]
+        )) @ (match n.else_ with
+        | Some c -> [seq [str "{"; newline; stmts c; str "}"]]
+        | None -> []) in
+        seq @@ (separate (str " else ") ifs)
+    and stmt = function
+        | Block.Expr n -> seq[expr n; str ";"]
+        | Block.Const n -> seq[const n; str ";"]
+        | Block.Block n -> block n
+        | Block.Return n -> seq[return n; str ";"]
+        | Block.Cond n -> cond n
+    and stmts n = 
+        ident_up [seq @@ List.map(fun s -> line @@ seq [stmt s]) n];
+    and block n = 
+        seq [
+            str "(() => {"; 
+            newline;
+            stmts n.stmts;
+            str "}) ()"; 
+        ] 
     and binary n = separated [
-        expr n.binary_left;
-        str n.binary_op;
-        expr n.binary_right;
+        expr Binary.(n.left);
+        str Binary.(n.op);
+        expr Binary.(n.right);
     ]
-    and expr: expr -> t -> unit = function
-        | Lambda n -> lambda n
-        | Num n -> num n
-        | Ident n -> ident n
-        | Str n -> str_ n
-        | Binary n -> binary n
-        | Block n -> block n
-        | Unary n -> 
-            separated [
-                str n.unary_op;
-                expr (n.unary);
+    and expr = function
+        | Expr.Lambda n -> lambda n
+        | Expr.Num n -> num n
+        | Expr.Ident n -> ident n
+        | Expr.Str n -> string n
+        | Expr.Binary n -> binary n
+        | Expr.Block n -> block n
+        | Expr.Parens p -> seq[str "("; expr p; str ")"]
+        | Expr.Unary n -> 
+            separated Unary.[
+                str n.op;
+                expr n.expr;
             ]
-        | Apply n ->
-            let fn = match n.apply_fn with
+        | Expr.Apply n ->
+            let fn = match Apply.(n.fn) with
             | Ident id -> ident id
-            | _ -> seq [str "("; expr (n.apply_fn); str ")"]
+            | fn -> seq [str "("; expr fn; str ")"]
             in seq [
                 fn;
                 str "(";
-                seq ~sep: ", " (List.map expr n.apply_args);
+                seq ~sep: ", " (List.map expr n.args);
                 str ")";
             ]
-    and return n = seq ~sep: " " [str "return"; expr n.return_expr]
-    and block_stmt stmt =
-        begin match stmt with 
-        | ExprStmt n -> seq[expr n; str ";"]
-        | ConstStmt n -> seq[const n; str ";"]
-        | BlockStmt n -> block n
-        | ReturnStmt n -> seq[return n; str ";"]
-        | CondStmt n -> 
-            let if_line = seq [str "if ("; expr n.cond_expr; str ") {"; newline] in
-            let then_block = block_stmts n.cond_then in
-            let else_block = match n.cond_else with
-            | None -> seq[str "}"]
-            | Some m -> seq[str "} else {"; newline; block_stmts m; str "}"] 
-            in
-            seq [if_line; then_block; else_block; newline]
-        end;
+    and return n = seq ~sep: " " [str "return"; expr Return.(n.expr)]
     and lambda n = 
-        let args = n.lambda_args |> List.map(fun arg -> str arg) |> separate (str ", ") in
+        let args = Lambda.(n.args) |> List.map(fun arg -> str arg) |> separate (str ", ") in
         let args_tuple = seq[str "("; seq args; str ")"] in
-        let args_block = block_stmts (n.lambda_block) in
+        let args_block = stmts Lambda.(n.block.stmts) in
             seq [args_tuple; str "=>"; str "{"; newline; ident_up [args_block]; str "}"]
-    and block_stmts n = 
-        ident_up [seq @@ List.map(fun stmt -> line @@ seq [block_stmt stmt]) (n.block_stmts)];
-    and block n = seq [
-        str "(() => {"; 
-        newline;
-        block_stmts n;
-        str "}) ()";
-    ]
 end
 
-(* and block = [`Expr of expr | `Const of const] *)
-
+(* TODO: name -> const_name, const_block *)

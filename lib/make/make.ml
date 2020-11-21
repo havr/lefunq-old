@@ -36,7 +36,7 @@ let js_backend ~fs typed out_file =
     let printer = Js.Ast.Printer.make ~ident: 4 () in
     Js.Ast.Printer.str "const println = (a) => console.log(a);\n" printer;
     js_ast |> List.iter (fun node ->
-        Js.Ast.Print.block_stmt node printer;
+        Js.Ast.Prn.stmt node printer;
         Js.Ast.Printer.str "\n" printer
     );
     Js.Ast.Printer.str "main();" printer;

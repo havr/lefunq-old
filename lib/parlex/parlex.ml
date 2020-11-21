@@ -109,6 +109,26 @@ module Lexer = struct
                 let contents = String.sub state.stream ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx) in
                 Ok (state', {start_pos = state.pos; end_pos = State.(state'.pos); value = make contents})
 
+        let next_match defs state = 
+            let matched = List.fold ~init:None defs ~f:(fun result (make, matcher) -> 
+                let (ok, state') = matcher state in
+                if ok then begin
+                    let content = String.sub State.(state.stream) ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx) in
+                    match result with
+                    | None -> Some(content, make, state')
+                    | Some(largest, _, _) -> 
+                        if String.length largest < String.length content then begin
+                            Stdio.print_endline content;
+                            Some(content, make, state')
+                        end else result
+                    end
+                else result
+            ) in match matched with
+            | None -> Error Err.{pos = State.(state.pos); msg = "unexpected character " ^ (State.describe_current state)}
+            | Some (content, make, state') -> 
+                Ok (state', {start_pos = state.pos; end_pos = State.(state'.pos); value = make content})
+
+
         let all nexter state = 
             let rec loop (result, state) = 
                 match State.isEof state with
