@@ -1,6 +1,7 @@
 module Lexeme = struct
   type t = string
   let to_string t = t
+  let eof = "eof"
 end
 
 open Parlex
@@ -38,9 +39,10 @@ let one_eof () =
   let state = make_fake ["hello"] in
   (* TODO: proper error checking *)
   match parser.fn state with 
-  | Ok _ -> Alcotest.fail "Unexpected ok" 
+  | Ok (lexeme, _) ->
+    Alcotest.fail ("Unexpected match: " ^ lexeme)
   | Error e -> 
-    Alcotest.(check string) "matches" "unexpected end of stream" e.message
+    Alcotest.(check string) "matches" "unexpected lexeme: eof" e.err_msg
 
 let tests = [
   "one_ok", `Quick, one_ok;

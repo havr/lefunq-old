@@ -1,4 +1,3 @@
 (library
  (name parlex)
- (modules parlex)
- (libraries base stdio))
+ (libraries base stdio common))

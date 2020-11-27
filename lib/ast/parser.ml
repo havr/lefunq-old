@@ -36,9 +36,9 @@ let ident = one (fun lexeme ->
     | _ -> None
 )
 
-let throw e = {fn = fun _ -> Error e} 
+let throw e = {fn = fun _ -> Error e}
 
-let precedence = [ ["$"]; ["|>"]; ["+"; "-"]; ["*"; "/"]; [">"; "<"] ]
+let precedence = [ ["|>"]; ["$"]; ["+"; "-"]; ["*"; "/"]; [">"; "<"; "=="; "!="]]
 
 let wrap p = {fn = p.fn}
 
@@ -113,9 +113,17 @@ module Arg = struct
     ]
 end
 
+let allow_operator_wrap op = ["-"; "+"] |> List.find ~f: (String.equal op) |> Option.is_none
 
 let combine_if bool parser rest =
     if bool then parser @@ rest else rest
+
+let operator_ident = 
+    let+ _ = one_value (function | Lexeme.OpenParen -> Some () | _ -> None)
+    and+ op = one_value (function | Lexeme.Op op -> Some (op) | _ -> None)
+    and+ _ = one_value (function | Lexeme.CloseParen -> Some () | _ -> None)
+    in
+        Node.Ident.{pos = op.start_pos; value = op.value}
 
 let rec value () = choice [
     map int (fun i -> Node.Value.Int i);
@@ -167,10 +175,12 @@ and binary' = function
  | [] -> unary ()
  | curr :: rest ->
     let rec loop result =
-        let* lexeme = maybe @@ one_value (function 
-            | Op op -> if List.exists curr ~f: (String.equal op) then Some (op) else None
-            | _ -> None
-        ) in 
+        let op_matches op = List.exists curr ~f: (String.equal op) in
+        let* lexeme = maybe @@ choice [
+            ignore_newline @@ one_value (function | Op op -> if op_matches op && allow_operator_wrap op then Some (op) else None | _ -> None);
+            one_value (function | Op op -> if op_matches op then Some (op) else None | _ -> None) 
+        ]
+        in 
         match lexeme with
         | None -> return (result)
         | Some (lexeme) -> 
@@ -197,8 +207,12 @@ and let_ () =
         (fun () -> map (block()) (fun v -> Node.Let.Block v));
         (fun () -> map (binary()) (fun v -> Node.Let.Expr v));
     ] in
+    let let_ident = choice [
+        (* TODO: can it contain spaces or \nlines*)
+        ident_lexeme; operator_ident
+    ] in
     let* keyword = let_lexeme in
-    let* ident = expect ~ctx:"let" ~exp:"identifier" @@ ignore_newline @@ ident_lexeme in
+    let* ident = expect ~ctx:"let" ~exp:"identifier" @@ ignore_newline @@ let_ident in
     let* args = many @@ (Arg.arg ()) in
     let* _ = expect ~ctx:"let" ~exp:"=" @@ ignore_newline @@ one_value (function Lexeme.Eq -> Some () | _ -> None) in 
     let* ex = expect ~ctx: "dbg" @@ ignore_newline @@ let_rhs in

@@ -1,5 +1,8 @@
-let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"]
-let is_js_operator ident = List.exists ((=) ident) js_operators
+open Base
+
+let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"; "=="; "!="]
+
+let is_js_operator ident = List.exists ~f:((String.equal) ident) js_operators
 
 exception Unreachable
 
@@ -14,15 +17,39 @@ let find_idx fn list =
 
 let binary_op_precedence = [["+"; "-"]; ["*"; "/"]; [">"; "<"; "<="; ">="; "=="]]
 let get_precedence op = 
-    find_idx (fun list -> List.find_opt(fun v -> v = op) list |> Option.is_some) (binary_op_precedence) 
+    find_idx (fun list -> List.find ~f:(fun v -> String.equal v op) list |> Option.is_some) (binary_op_precedence) 
     |> Option.value ~default:(-1)
 
-let ident n = Ast.Ident.{value = Typed.Ident.(n.name)}
+(* TOOD: module operator-related stuff into a submodule *)
+let operator_mappings = [
+    '$', "dollar";
+    '|', "pipe";
+    '>', "more"
+]
+
+let operators = operator_mappings |> List.map ~f:(fun (m, _) -> m)
+
+let is_operator str = 
+    let ch = String.get str 0 in 
+    List.find ~f:(fun n -> Char.equal n ch) operators |> Option.is_some
+
+let map_operator op = List.fold (String.to_list op) ~init: "" ~f: (fun result char -> 
+    result ^ "$" ^ (List.find_map_exn operator_mappings ~f: (fun (c, alias) -> if Char.equal c char then Some alias else None))
+)
+
+let ident_value n = 
+    let name = Typed.Ident.(n.name) in
+    if is_operator name then map_operator name else 
+        List.fold ["'", "$prime"; "!", "$unsafe"] ~init: Typed.Ident.(n.name) ~f: (fun accum (str, sub) -> 
+            String.substr_replace_all accum ~pattern: str ~with_: sub 
+        )
+
+let ident n = Ast.Ident.{value = ident_value n}
 
 let basic b =
-    if Typed.Value.(b.type_) = Common.Const.BasicTypes.str 
+    if phys_equal Typed.Value.(b.type_) Common.Const.BasicTypes.str 
         then Ast.Expr.Str(Ast.Str.{value = b.value})
-    else if Typed.Value.(b.type_) = Common.Const.BasicTypes.int 
+    else if phys_equal Typed.Value.(b.type_) Common.Const.BasicTypes.int 
         then Ast.Expr.Num(Ast.Num.{value = b.value})
     else raise @@ Unexpected ("unexpected basic type: " ^ b.type_ ^ "(has value: " ^ b.value ^ ")")
 
@@ -75,12 +102,12 @@ and cond n =
         | (Typed.Stmt.Expr e) :: [] -> expr e 
         | b -> Block (block b)
     in
-    let conds = Typed.Cond.(n.cases) |> List.map(fun Typed.Cond.{if_; then_} ->
+    let conds = Typed.Cond.(n.cases) |> List.map ~f:(fun Typed.Cond.{if_; then_} ->
         let if_ = cond_expr if_.stmts in
         let then_ = block then_.stmts in
         Ast.Cond.{if_ = if_; then_ = then_.stmts}
     ) in let cond_block = Ast.Block.Cond Ast.Cond.{
-        conds=conds; else_ = n.else_ |> Option.map (fun m  -> Typed.Block.(block m.stmts).stmts)
+        conds=conds; else_ = n.else_ |> Option.map ~f: (fun m  -> Typed.Block.(block m.stmts).stmts)
     }
     in Ast.Expr.Block(Ast.Block.{stmts=[cond_block]})
 and lambda n = 
@@ -104,18 +131,18 @@ and block_stmt = function
 
 and block n =
     let map_block_stmt len idx stmt = 
-        if idx == len - 1 then 
+        if phys_equal idx (len - 1) then 
             match stmt with
             | Typed.Stmt.Expr n -> Ast.Block.Return Ast.Return.{ expr = expr n }
             | _ -> block_stmt stmt
         else block_stmt stmt
-    in Ast.Block.{ stmts = List.mapi (map_block_stmt (List.length n)) (n) }
+    in Ast.Block.{ stmts = List.mapi ~f: (map_block_stmt (List.length n)) (n) }
 
 and let_ n = 
     let const_expr = 
         match Typed.Block.(n.block.stmts) with
         | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr m)
         | _ -> Ast.Const.Block  (block n.block.stmts)
-    in Ast.Const.{ name = (n.ident.name); expr = const_expr }
+    in Ast.Const.{ name = ident_value n.ident; expr = const_expr }
 
     

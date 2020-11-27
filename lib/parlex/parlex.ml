@@ -1,7 +1,9 @@
+open Base
+
 module Pos = struct 
     type t = {row: int; col: int; idx: int}
     let empty = {row = 1; col = 1; idx = 0}
-    let next char pos = if char == '\n' then 
+    let next char pos = if (phys_equal char '\n') then 
         {row = pos.row + 1; col = 1; idx = pos.idx + 1} 
         else {pos with col = pos.col + 1; idx = pos.idx + 1}
 
@@ -63,7 +65,7 @@ module Lexer = struct
             in loop state 0
 
 
-        let maybe lexer state = (lexer state, true)
+        let maybe lexer state = let (_, state') = lexer state in (true, state')
 
         let many lexer state = 
             let rec loop (state: State.t) : (bool * State.t) = 
@@ -99,6 +101,12 @@ module Lexer = struct
                 | Some state -> (true, state)
                 | None -> (false, initial)
 
+        let ignore defs state =
+            List.find_map defs ~f:(fun matcher -> 
+                let (ok, state') = matcher state in
+                if ok then Some(state') else None
+            )
+
         let next defs state = 
             let matched = List.find_map defs ~f:(fun (make, matcher) -> 
                 let (ok, state') = matcher state in
@@ -108,40 +116,85 @@ module Lexer = struct
             | Some (make, state') ->
                 let contents = String.sub state.stream ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx) in
                 Ok (state', {start_pos = state.pos; end_pos = State.(state'.pos); value = make contents})
-
-        let next_match defs state = 
-            let matched = List.fold ~init:None defs ~f:(fun result (make, matcher) -> 
-                let (ok, state') = matcher state in
-                if ok then begin
-                    let content = String.sub State.(state.stream) ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx) in
-                    match result with
-                    | None -> Some(content, make, state')
-                    | Some(largest, _, _) -> 
-                        if String.length largest < String.length content then begin
-                            Stdio.print_endline content;
-                            Some(content, make, state')
-                        end else result
-                    end
-                else result
-            ) in match matched with
-            | None -> Error Err.{pos = State.(state.pos); msg = "unexpected character " ^ (State.describe_current state)}
-            | Some (content, make, state') -> 
-                Ok (state', {start_pos = state.pos; end_pos = State.(state'.pos); value = make content})
-
-
-        let all nexter state = 
-            let rec loop (result, state) = 
-                match State.isEof state with
-                | true -> 
-                    Ok (List.rev result)
-                | false ->
-                    match nexter state with
-                    | Ok (state', lexeme) -> 
-                        loop (lexeme::result, state')
-                    | Error err -> Error err
-            in let result = loop ([], state) in
-            result
     end
+
+    module Match = struct
+    type 't config = {
+        lexemes: ((string -> 't) * (State.t -> (bool * State.t))) list;
+        skip: (State.t -> (bool * State.t)) list;
+        unexpected: string -> 't;
+        eof: 't 
+    }
+
+    exception Panic of string
+
+    let lexeme_of map state state' =
+        if not @@ phys_equal State.(state.stream) State.(state'.stream) then
+            raise (Panic "states don't match")
+        else {
+            start_pos=State.(state.pos);
+            end_pos=State.(state'.pos);
+            value = map(String.sub State.(state.stream) ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx))
+        }        
+
+    let next config state = 
+        let skip state = List.find_map config.skip ~f:(fun matcher -> 
+            let (ok, state') = matcher state in
+            if ok then Some(state') else None
+        ) in
+        let match_ state = 
+            List.fold ~init:None config.lexemes ~f:(fun result (make, matcher) -> 
+                match matcher state with
+                | (false, _) -> result
+                | (true, state') ->
+                    let length = state'.pos.idx - state.pos.idx in
+                    match result with
+                    | None -> Some(length, make, state')
+                    | Some(largest, _, _) -> 
+                        if largest < length then 
+                            Some(length, make, state')
+                        else result
+            )
+        in
+        let rec match_step (state, prev_mismatch, result) =
+            match skip state with
+            | Some state' -> 
+                let new_result = match prev_mismatch with
+                | Some mismatch ->(lexeme_of (fun s -> config.unexpected s) mismatch state) :: result
+                | None -> result
+                in match_step (state', None, new_result)
+            | None ->
+                if State.isEof state then 
+                    let eof_lexeme = lexeme_of (fun _ -> config.eof) state state in
+                    let new_result = match prev_mismatch with
+                        | Some mismatch -> eof_lexeme :: lexeme_of (fun s -> config.unexpected s) mismatch state :: result
+                        | None -> eof_lexeme :: result
+                    in (List.rev new_result, state)
+                else match match_ state with
+                | Some (_, map, state') -> 
+                    let lexeme = lexeme_of map state state' in
+                    let lexemes = List.rev @@ match prev_mismatch with 
+                        | Some mismatch -> lexeme :: lexeme_of (fun s -> config.unexpected s) mismatch state :: result
+                        | None -> lexeme :: result
+                    in (lexemes, state')
+                | None ->
+                    let new_mismatch = if Option.is_none prev_mismatch then Some state else prev_mismatch in
+                    match_step (State.next state, new_mismatch, result)
+        in
+        let (lexemes, state') = match_step (state, None, []) in (lexemes, state')
+
+    let all config state = 
+        let nexter = next config in
+        let rec loop (result, state) = 
+            match State.isEof state with
+            | true -> 
+                Ok (List.rev result)
+            | false ->
+                let (lexemes, state') = nexter state in loop (lexemes @ result, state')
+        in let result = loop ([], state) in
+        result
+    end
+
 end
 
 module type LEXEME = sig 
@@ -168,8 +221,6 @@ module Parser(Lexeme: LEXEME) = struct
             let value = if length = 0 then Pos.empty else (arr.(length - 1).end_pos) in 
             { curr = 0; lexemes = arr; last_pos = value }
 
-        let isEof state = state.curr >= Array.length state.lexemes 
-
         let curr state = 
             if state.curr < Array.length state.lexemes then
                 state.lexemes.(state.curr)
@@ -185,7 +236,7 @@ module Parser(Lexeme: LEXEME) = struct
         let curr_pos state = (curr state).start_pos
     end
 
-    type 't t = { fn: State.t -> ('t * State.t, err) result }
+    type 't t = { fn: State.t -> ('t * State.t, err) Result.t }
 
     let no_match err = { fn = fun state -> 
         Error {
@@ -213,7 +264,9 @@ module Parser(Lexeme: LEXEME) = struct
     }
 
     let eof = { fn = fun state ->
-        if State.isEof state then Ok ((), state) else (no_match "unable to match eof").fn state
+        if phys_equal (State.curr state).value Lexeme.eof then 
+            Ok((), state)
+        else (no_match "unable to match eof").fn state
     }
 
     let return value = { fn = fun state -> Ok (value, state) }

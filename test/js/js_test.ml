@@ -56,7 +56,7 @@ end
 
 let () = ignore @@ EndToEnd.define "lambdas" [
     (* move to cond *)
-    (* {
+    {
         name = "multiple";
         expect = "a\nb\nc";
         code = {|
@@ -71,7 +71,37 @@ let () = ignore @@ EndToEnd.define "lambdas" [
                 println c
             }
         |}
-    }; *)
+    };
+    (* move into "operators" *)
+    {
+        name = "allows moving |> and $ to the next line";
+        expect = "42";
+        code = {|
+            let (|>) x f = f x 
+            let ($) f x = f x
+            let add a b = a + b
+            let main () = add 2 
+                $ 40 
+                |> println
+        |}
+    };
+    {
+        name = "specifies a custom operator";
+        expect = "42";
+        code = {|
+            let (|>) x f = f x 
+            let main () = 42 |> println
+        |}
+    };
+    (* move into "idens" *)
+    {
+        name = "translates non-ident js symbols";
+        expect = "42";
+        code = {|
+            let __should'run''! = 42
+            let main () = println __should'run''!
+        |}
+    };
     (* move into "if" *)
     {
         name = "comparison";

@@ -2,7 +2,6 @@ type t = Int of string
     | Str of string
     | Ident of string 
     | Op of string
-    | Whitespace 
     | Let
     | Eq
     | Semi
@@ -17,12 +16,10 @@ type t = Int of string
     | If
     | Then
     | Else
-    (* TODO: ignore them during "iteration" *)
-    | Comment
+    | Error of string
 
 let to_string lexeme = match lexeme with
     | Ident id -> "ident:" ^ id
-    | Whitespace -> "whitespace"
     | Int id ->  "int:" ^ id
     | Op op -> "op:" ^ op
     | Let -> "let"
@@ -37,9 +34,9 @@ let to_string lexeme = match lexeme with
     | CloseParen -> ")"
     | Coma -> ","
     | Lambda -> "\\"
-    | Comment -> "comment"
     | If -> "if"
     | Then -> "then"
     | Else -> "else"
+    | Error e -> "error: " ^ e
 
 let eof = Eof
