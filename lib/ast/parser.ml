@@ -93,6 +93,10 @@ let separated_by sep p =
     and+ rest = many separated_elem in
         (first :: rest)
 
+module LexemeMatchers = struct 
+    let rec_ = one_value (function | Lexeme.Rec -> Some() | _ -> None) 
+end
+
 module Arg = struct 
     (* TODO: simplify *)
 
@@ -212,12 +216,13 @@ and let_ () =
         ident_lexeme; operator_ident
     ] in
     let* keyword = let_lexeme in
+    let* rec_ = maybe @@ LexemeMatchers.rec_ in
     let* ident = expect ~ctx:"let" ~exp:"identifier" @@ ignore_newline @@ let_ident in
     let* args = many @@ (Arg.arg ()) in
     let* _ = expect ~ctx:"let" ~exp:"=" @@ ignore_newline @@ one_value (function Lexeme.Eq -> Some () | _ -> None) in 
     let* ex = expect ~ctx: "dbg" @@ ignore_newline @@ let_rhs in
     let arg_list = match args with | [] -> None  | args -> Some Node.Arg.{args=args} in
-        return Node.Let.{pos = keyword.start_pos; args = arg_list; ident = ident; expr = ex}
+        return Node.Let.{pos = keyword.start_pos; is_rec = Option.is_some rec_; args = arg_list; ident = ident; expr = ex}
 and block () = 
     let+ open_lex = one_value (function | Lexeme.OpenBlock -> Some() | _ -> None)
     and+ stmts = block_stmts() 

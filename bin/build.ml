@@ -1,4 +1,4 @@
-open Common
+open Base
 open Cli.Args
 open Cli.Args.Syntax
 
@@ -11,5 +11,5 @@ let args =
 let main args = 
     match Make.make ~fs:Make.Fs.local args.src args.dst with
     | Ok _ -> ()
-    | Error e -> 
-        print_endline @@ (Pos.to_str e.pos) ^ ": " ^ e.msg
+    | Error es -> 
+        List.iter es ~f:(Cli_err.print)

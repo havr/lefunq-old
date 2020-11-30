@@ -34,17 +34,16 @@ let is_operator str =
     List.find ~f:(fun n -> Char.equal n ch) operators |> Option.is_some
 
 let map_operator op = List.fold (String.to_list op) ~init: "" ~f: (fun result char -> 
-    result ^ "$" ^ (List.find_map_exn operator_mappings ~f: (fun (c, alias) -> if Char.equal c char then Some alias else None))
+    result ^ "$" ^ (List.find_map_exn operator_mappings ~f: (fun (c, alias) -> 
+        if Char.equal c char then Some alias else None ))
 )
 
-let ident_value n = 
-    let name = Typed.Ident.(n.name) in
+let ident_value name = 
     if is_operator name then map_operator name else 
-        List.fold ["'", "$prime"; "!", "$unsafe"] ~init: Typed.Ident.(n.name) ~f: (fun accum (str, sub) -> 
-            String.substr_replace_all accum ~pattern: str ~with_: sub 
-        )
+        List.fold ["'", "$prime"; "!", "$unsafe"] ~init: name ~f: (fun accum (str, sub) -> 
+            String.substr_replace_all accum ~pattern: str ~with_: sub)
 
-let ident n = Ast.Ident.{value = ident_value n}
+let ident n = Ast.Ident.{value = ident_value Typed.Ident.(n.given_name)}
 
 let basic b =
     if phys_equal Typed.Value.(b.type_) Common.Const.BasicTypes.str 
@@ -70,7 +69,7 @@ let rec apply n = begin
     in
     match Typed.Apply.(n.fn) with 
     | Typed.Expr.Ident m -> 
-        let local_name = m.name in
+        let local_name = m.given_name in
         if not @@ is_js_operator local_name then
             apply_seq (Ast.Expr.Ident (ident m)) n.args
         else begin
@@ -143,6 +142,6 @@ and let_ n =
         match Typed.Block.(n.block.stmts) with
         | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr m)
         | _ -> Ast.Const.Block  (block n.block.stmts)
-    in Ast.Const.{ name = ident_value n.ident; expr = const_expr }
+    in Ast.Const.{ name = ident_value n.name; expr = const_expr }
 
     

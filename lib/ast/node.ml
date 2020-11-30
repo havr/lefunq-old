@@ -28,10 +28,10 @@ end = struct
 end
 and Let: sig
     type expr = Expr of Expr.t | Block of Block.t
-    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr}
+    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr; is_rec: bool}
 end = struct 
     type expr = Expr of Expr.t | Block of Block.t
-    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr}
+    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr; is_rec: bool}
 end
 and Block: sig
     type block_stmt = Expr of Expr.t | Let of Let.t | Block of Block.t

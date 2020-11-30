@@ -1,4 +1,4 @@
-open Common
+open Base
 open Cli.Args
 open Cli.Args.Syntax
 
@@ -8,14 +8,15 @@ let args =
     {src = src}
 
 let run_node file =
-    ignore @@ Sys.command @@ "node " ^ file
+    ignore @@ Caml.Sys.command @@ "node " ^ file
+
 
 let main args = 
-    let tmp_file = Filename.concat (Filename.get_temp_dir_name ()) "out" in
+    let tmp_file = Caml.Filename.concat (Caml.Filename.get_temp_dir_name ()) "out" in
     begin match Make.make ~fs:Make.Fs.local args.src tmp_file with
     | Ok _ ->
-        print_endline tmp_file;
+        Stdio.print_endline tmp_file;
         run_node tmp_file
-    | Error e -> 
-        print_endline @@ (Pos.to_str e.pos) ^ ": " ^ Err.(e.msg)
-    end;
+    | Error es -> 
+        List.iter es ~f:(Cli_err.print)
+    end

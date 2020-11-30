@@ -1,10 +1,10 @@
 (* open Js
 open Ir *)
 open Common
-(* open Base *)
+open Base
 
 let run cmds = 
-    let inp = Unix.open_process_in (String.concat " " cmds) in
+    let inp = Unix.open_process_in (String.concat ~sep:" " cmds) in
     let r = Core.In_channel.input_lines inp in
     Core.In_channel.close inp; 
     r
@@ -16,11 +16,11 @@ let execute code =
     | Ok () -> 
         (* TODO: cleanup, unique tmp file name *)
         (* TODO: cleanup *)
-        File.write "./tmp.js" (memfs.read "dst.js" |> Option.get);
-        print_endline (memfs.read "dst.js" |> Option.get);
+        File.write "./tmp.js" (Option.value_exn (memfs.read "dst.js"));
+        Stdio.print_endline (Option.value_exn (memfs.read "dst.js"));
         Ok(run ["node"; "./tmp.js"])
     | Error e -> 
-        print_endline (memfs.read "dst.js" |> Option.value ~default: "");
+        Stdio.print_endline (Option.value ~default: "" (memfs.read "dst.js"));
         Error(e)
 
 module EndToEnd = struct 
@@ -32,17 +32,18 @@ module EndToEnd = struct
 
     let alcotest case () =
         match execute case.code with
-        | Error e -> 
-            Alcotest.fail (Format.sprintf "failed at %s: %s" (Pos.to_str e.pos) e.msg)
+        | Error es -> 
+            List.map es ~f: (fun e -> Caml.Format.sprintf "%s: %s" (Pos.to_str e.pos) e.msg)
+            |> String.concat ~sep: "\n" |>  Alcotest.fail 
         | Ok lines -> 
-            let got = String.concat "\n" lines in
-            if got <> case.expect then begin 
+            let got = String.concat ~sep:"\n" lines in
+            if not @@ String.equal got case.expect then begin 
                 Alcotest.(fail) ("result mismatch: " ^ got ^ " expected " ^ case.expect)
             end
 
 
     let define name tests = [
-        let alcodefs = tests |> List.map (fun test -> 
+        let alcodefs = tests |> List.map ~f:(fun test -> 
             (test.name, `Quick, alcotest test)
         ) in Alcotest.run name ["Root", alcodefs]
     ]
@@ -53,7 +54,6 @@ end
   "Applicative", Applicative_test.tests;
   "Matchers", Matchers_test.tests;
 ] *)
-
 let () = ignore @@ EndToEnd.define "lambdas" [
     (* move to cond *)
     {
@@ -120,7 +120,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         name = "factorial";
         expect = "720";
         code = {|
-            let fact n = 
+            let rec fact n = 
                 if n > 1 then 
                     n * (fact (n - 1)) 
                 else 

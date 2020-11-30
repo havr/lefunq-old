@@ -14,12 +14,14 @@ let from_parlex_pos pos = {
 }
 
 let from_comb_err file err = Err.{
+    context = None;
     file = file;
     msg = Comb.(err.err_msg);
     pos = from_parlex_pos @@ Comb.(err.err_pos)
 }
 
 let from_lexer_err file err = Err.{
+    context = None;
     file = file;
     msg = Parlex.Lexer.Err.(err.msg);
     pos = from_parlex_pos @@ Parlex.Lexer.Err.(err.pos)

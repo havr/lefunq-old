@@ -29,6 +29,8 @@ let defs = [
         str "then");
     ((fun _ -> Else), 
         str "else");
+    ((fun _ -> Rec), 
+        str "rec");
     ((fun _ -> LineBreak), 
         oneMore (char "\n"));
     ((fun s -> Int s), 

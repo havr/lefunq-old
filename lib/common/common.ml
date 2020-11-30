@@ -6,7 +6,8 @@ module Pos = struct
 end
 
 module Err = struct 
-    type t = {file: string; pos: Pos.t; msg: string}
+    type context = {lines: string list; start_line: int}
+    type t = {file: string; pos: Pos.t; msg: string; context: context option}
 end
 
 module File = struct 
