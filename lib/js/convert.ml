@@ -1,6 +1,6 @@
 open Base
 
-let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"; "=="; "!="]
+let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"; "=="; "!="; "%"]
 
 let is_js_operator ident = List.exists ~f:((String.equal) ident) js_operators
 
@@ -15,7 +15,7 @@ let find_idx fn list =
         | x :: rest -> if fn x then Some n else find_idx' (n + 1) rest
     in find_idx' 0 list
 
-let binary_op_precedence = [["+"; "-"]; ["*"; "/"]; [">"; "<"; "<="; ">="; "=="]]
+let binary_op_precedence = [["+"; "-"]; ["*"; "/"; "%"]; [">"; "<"; "<="; ">="; "=="]]
 let get_precedence op = 
     find_idx (fun list -> List.find ~f:(fun v -> String.equal v op) list |> Option.is_some) (binary_op_precedence) 
     |> Option.value ~default:(-1)

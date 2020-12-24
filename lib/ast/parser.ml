@@ -38,7 +38,7 @@ let ident = one (fun lexeme ->
 
 let throw e = {fn = fun _ -> Error e}
 
-let precedence = [ ["|>"]; ["$"]; ["+"; "-"]; ["*"; "/"]; [">"; "<"; "=="; "!="]]
+let precedence = [ ["|>"]; ["$"]; ["+"; "-"]; ["*"; "/"; "%"]; [">"; "<"; "=="; "!="]]
 
 let wrap p = {fn = p.fn}
 

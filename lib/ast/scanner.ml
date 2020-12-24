@@ -54,7 +54,7 @@ let defs = [
     ((fun _ -> Lambda), 
         char "\\");
     ((fun op -> Op op),
-        choice [str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"; str "=="; str "!="]);
+        choice [str "%"; str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"; str "=="; str "!="]);
     ((fun s -> Ident s), 
         seq [char identStart; many (char identMiddle); maybe (char identEnd)]
     );
