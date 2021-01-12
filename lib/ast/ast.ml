@@ -29,15 +29,25 @@ let from_lexer_err file err = Err.{
 
 let of_lexemes ~file lexemes = 
     let parser_state = Comb.State.make lexemes in
-    match Parser.parse_root_stmts.fn parser_state with
+    match Parser.root.fn parser_state with
     | Error e -> Error (from_comb_err file e)
     | Ok (result, _) -> Ok result
 
+(* TODO: file_name *)
 let of_string ~file str = 
     match Scanner.scan_all str with
     | Error err -> Error (from_lexer_err file err)
     | Ok lexemes -> of_lexemes ~file lexemes
     
+let parse_custom ~file_name parser str =
+    match Scanner.scan_all str with
+    | Error err -> Error (from_lexer_err file_name err)
+    | Ok lexemes -> begin
+        let parser_state = Comb.State.make lexemes in
+        match parser parser_state with
+        | Error e -> Error (from_comb_err file_name e)
+        | Ok (result, _) -> Ok result
+    end
 (* 
 
  - Parpar

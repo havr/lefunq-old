@@ -62,3 +62,14 @@ and Expr: sig
 end = struct 
     type t = Value of Value.t | Apply of Apply.t | Cond of Cond.t
 end
+and Module: sig
+    type entry = Let of Let.t
+end = struct 
+    type entry = Let of Let.t
+end
+
+module Root = struct 
+    type t = {
+        entries: Module.entry list
+    }
+end

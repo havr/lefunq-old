@@ -244,8 +244,18 @@ and lambda () =
     and+ b = (block ()) in
         (* let foo = Option.value ~default:Node.{params=[]} args in *)
         Node.Lambda.{args={args=args}; block=b}
+and module_entries () = 
+    let root_stmt () = choicef [
+        (fun () -> map (let_()) (fun v -> Node.Module.Let v));
+    ] in let separated_block_stmt = 
+        let+ stmt = ignore_newline @@ (root_stmt ())
+        and+ _ = maybe @@ one_value (function | LineBreak -> Some() | Semi -> Some() | _ -> None) in
+            stmt
+    in many Comb.{fn = separated_block_stmt.fn}
 
-let parse_root_stmts = 
-    let* value = block_stmts () in
+let root = 
+    let* entries = module_entries () in
     let* _ = expect ~ctx: "eof" @@ eof in
-    return value
+    return Node.Root.{
+        entries
+    }

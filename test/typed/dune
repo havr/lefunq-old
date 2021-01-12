@@ -2,5 +2,7 @@
  (name typed_test)
  (libraries
   alcotest
+  parlex
+  ast
   typed
 ))

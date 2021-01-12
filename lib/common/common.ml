@@ -1,7 +1,13 @@
+open Base
+
 module Const = Const
 
 exception Unexpected
+exception Unreachable
 exception TODO
+
+module StringMap = Map.M(String)
+module StringSet = Set.M(String)
 
 module Pos = struct 
     type t = {row: int; col: int}
@@ -16,20 +22,18 @@ end
 
 module File = struct 
     let read filename = 
-        let ch = open_in filename in
-        let s = really_input_string ch (in_channel_length ch) in
-        close_in ch;
+        let ch = Stdio.In_channel.create filename in
+        let s = Caml.really_input_string ch (Stdio.In_channel.length ch |> Int64.to_int_exn) in
+        Stdio.In_channel.close ch;
         Some s
 
     let write filename contents = 
-        let out = open_out filename in
-        Printf.fprintf out "%s" contents;
-        close_out out
+        let out = Stdio.Out_channel.create filename in
+        Caml.Printf.fprintf out "%s" contents;
+        Stdio.Out_channel.close out
 end
 
-open Base
-
-let[@inline] dbg args = 
+let[@inline] log args = 
     let print_callee depth = 
         let slots = Caml.Printexc.get_callstack depth |> Caml.Printexc.backtrace_slots in
         match slots with

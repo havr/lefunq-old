@@ -3,7 +3,7 @@ module Fake = struct
     Typed.Ident.{
       pos = Common.Pos.empty;
       given_name = name;
-      type_ = type_; (* TODO: is it really needed here *)
+      scheme = Some (Typed.Type.make_scheme [] type_); (* TODO: is it really needed here *)
       resolved = Typed.Ident.Local {
         scope_name = name;
         param = false;
@@ -14,12 +14,14 @@ module Fake = struct
     Typed.Ident.{
       pos = Common.Pos.empty;
       given_name = name;
-      type_ = type_; (* TODO: is it really needed here *)
+      scheme = Some (Typed.Type.make_scheme [] type_); (* TODO: is it really needed here *)
       resolved = Typed.Ident.Global {
         global_name = name
       }
     }
 end
+
+let test_todo () = Alcotest.fail "todo"
 
 open Base
 
@@ -44,18 +46,18 @@ module Unify = struct
     | None -> 
       Some (var' ^ ": no substitution")
   )
-
+(*
   let test ~src ~dst ?(errors=[]) ~expect () =
-    let ctx = Typed.Unify.make_ctx () in
-    let substs = Typed.Unify.unify ~ctx src dst in
-    let results = results expect substs
+    let ctx = Typed.Infer.make_ctx () in
+    let unified = Typed.Infer.unify ~ctx src dst in
+    let results = results expect unified.unified
     in begin if List.length results > 0 then
         Alcotest.fail (String.concat ~sep: "\n" results) end;
     begin 
         let errors_expected_not_found = difference 
-          ~equals: (Unify.error_equals) errors (Basket.get ctx.errors) in
+          ~equals: (Infer.error_equals) errors (Basket.get ctx.errors) in
         let unexpected_got = difference 
-          ~equals: (Unify.error_equals) (Basket.get ctx.errors) errors in
+          ~equals: (Infer.error_equals) (Basket.get ctx.errors) errors in
         let map_errors errors = errors |> List.map ~f: (fun err ->
           match err with
           | Unify.Mismatch {expected; got} -> 
@@ -108,7 +110,7 @@ module Unify = struct
   let test_simple_mismatch () = 
     test 
       ~src: (Type.Simple "Int")
-      ~dst: (Type.Simple "Str")
+      (* ~dst: (Type.Simple "Str") *)
       ~errors: [
         Typed.Unify.Mismatch {
           expected = Type.Simple "Int";
@@ -151,50 +153,50 @@ module Unify = struct
   let run_test () = Alcotest.run "Unify" [
     "InferTest", tests
   ]
+  *)
 end
 
 module Infer = struct 
-  let local_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
+  let local_ident_expr name = Typed.Expr.Ident (Typed.Ident.{
     pos = Common.Pos.empty;
-    given_name = "test";
+    given_name = name;
     resolved = Typed.Ident.Local {scope_name = name; param = false};
-    type_ = Typed.Type.{typ = typ; constr = []}
+    scheme = None;
+  })
+
+  let typed_local_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
+    pos = Common.Pos.empty;
+    given_name = name;
+    resolved = Typed.Ident.Local {scope_name = name; param = false};
+    scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
   let global_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
     pos = Common.Pos.empty;
-    given_name = "test";
+    given_name = name;
     resolved = Typed.Ident.Global {global_name = name};
-    type_ = {typ = typ; constr = []}
+    scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
   let global_scheme_expr name typ = Typed.Expr.Ident (Typed.Ident.{
     pos = Common.Pos.empty;
-    given_name = "test";
+    given_name = name;
     resolved = Typed.Ident.Global {global_name = name};
-    type_ = typ
+    scheme = Some typ;
   })
 
   let tuple_expr exprs = Typed.Expr.Tuple (Typed.Tuple.{
     exprs = exprs
   })
 
-open Common
-
-  let test ?(errors=[]) ~node ~expect_type ~expect= 
-    let ctx = Typed.Infer.{
-      errors = Typed.Basket.make ();
-      namer = Typed.TypeNamer.make ();
-      store = Typed.TypeStore.make ();
-    } in
-    let (subst, typ) = Typed.Infer.expr ~ctx (Typed.Infer.empty_subst) (Typed.Expr.Apply node) in
-    Stdio.print_endline @@ "^" ^ Typed.Type.to_string typ;
-    dbg [Typed.Infer.substs_to_string subst; Typed.Type.to_string typ];
+  let check_results ?(errors=[]) ~ctx ~expect_type ~expect subst typ = 
     let typ = Typed.Infer.apply_substs subst typ in
     let results = Unify.results expect subst in
     begin 
       if not @@ Typed.Type.equals typ expect_type then
-        Alcotest.fail (Typed.Type.to_string typ ^ "!=" ^ (Typed.Type.to_string expect_type))
+        Alcotest.fail @@ String.concat [
+          "(got) "; Typed.Type.to_string typ; " != (expected) "; Typed.Type.to_string expect_type
+        ]
     end;
     begin 
       if List.length results > 0 then
@@ -202,15 +204,21 @@ open Common
     end;
     begin 
         let errors_expected_not_found = difference 
-          ~equals: (Typed.Infer.error_equals) errors (Typed.Basket.get ctx.errors) in
+          ~equals: (Typed.Infer.error_equals) errors (Typed.Basket.get Typed.Infer.(ctx.errors)) in
         let unexpected_got = difference 
           ~equals: (Typed.Infer.error_equals) (Typed.Basket.get ctx.errors) errors in
         let map_errors errors = errors |> List.map ~f: (fun err ->
           match err with
           | Typed.Infer.TypeMismatch {type_expected; type_provided} -> 
-            "expected:" ^ (Typed.Type.to_string type_expected) ^ " != provided:" ^ (Typed.Type.to_string type_provided)
+            "TypeMismatch: expected " ^ (Typed.Type.to_string type_expected) ^ " != provided " ^ (Typed.Type.to_string type_provided)
           | Typed.Infer.NotFunction {type_provided} -> 
-            "not a function: " ^ (Typed.Type.to_string type_provided)
+            "NotFunction: " ^ (Typed.Type.to_string type_provided)
+          | Typed.Infer.IgnoredResult {type_provided} -> 
+            "IgnoredResult: " ^ (Typed.Type.to_string type_provided)
+          | Typed.Infer.IfTypeMismatch {unexpected} -> 
+            "IfTypeMismatch: " ^ (Typed.Type.to_string unexpected)
+          | Typed.Infer.BranchTypeMismatch {unexpected; expected} -> 
+            "BranchTypeMismatch:" ^ (Typed.Type.to_string expected) ^ " != got " ^ (Typed.Type.to_string unexpected)
         ) in
         let exp_not_found = if List.length errors_expected_not_found > 0 then
           map_errors errors_expected_not_found 
@@ -232,72 +240,81 @@ open Common
             |> ignore
       end
 
+  let test ?(errors=[]) ~node ~expect_type ~expect = 
+    let ctx = Typed.Infer.{
+      errors = Typed.Basket.make ();
+      tempvar = Typed.make_tempvar_gen "t";
+      store = Typed.TypeStore.make ();
+    } in
+    let (subst, typ) = Typed.Infer.expr ~ctx (Map.empty (module String)) (Typed.Infer.empty_subst) node in
+    check_results ~ctx ~errors ~expect_type ~expect subst typ
+
 
   let test_apply () = test 
-      ~node: Typed.Apply.{
-        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Type.Simple "Int"; Typed.Type.Simple "Str"];
+      ~node: (Typed.Expr.Apply Typed.Apply.{
+        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.BaseTypes.int; Typed.Type.Simple "Str"];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Var "t0"
+          typed_local_ident_expr "hello" @@ Typed.Type.Var "t0"
         ]
-      }
+      })
       ~expect_type: (Typed.Type.Simple "Str")
       ~expect: [
-        "t0", Typed.Type.Simple "Int"
+        "t0", Typed.BaseTypes.int
       ]
       ~errors: []
 
   let test_simple_apply_mismatch () = test 
-      ~node: Typed.Apply.{
-        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Type.Simple "Int"; Typed.Type.Simple "Str"];
+      ~node: (Typed.Expr.Apply Typed.Apply.{
+        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.BaseTypes.int; Typed.Type.Simple "Str"];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Simple "Float"
+          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Float"
         ]
-      }
+      })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
         Typed.Infer.TypeMismatch {
           type_provided = Typed.Type.Simple "Float";
-          type_expected = Typed.Type.Simple "Int";
+          type_expected = Typed.BaseTypes.int;
         }
       ]
       ~expect: []
 
   let test_inferred_apply_mismatch () = test 
-      ~node: Typed.Apply.{
-        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Type.Simple "Int"; Typed.Type.Simple "Float"; Typed.Type.Simple "Str"];
+      ~node: (Typed.Expr.Apply Typed.Apply.{
+        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.BaseTypes.int; Typed.Type.Simple "Float"; Typed.Type.Simple "Str"];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Var "t0";
-          local_ident_expr "hello" @@ Typed.Type.Var "t0"
+          typed_local_ident_expr "hello" @@ Typed.Type.Var "t0";
+          typed_local_ident_expr "hello" @@ Typed.Type.Var "t0"
         ]
-      }
+      })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
         Typed.Infer.TypeMismatch {
-          type_provided = Typed.Type.Simple "Int";
+          type_provided = Typed.BaseTypes.int;
           type_expected = Typed.Type.Simple "Float";
         }
       ]
       ~expect: []
 
   let test_inferred_nested_apply_mismatch () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_scheme_expr "test" @@ Typed.Type.lambda [
           Typed.Type.Simple "Str"; 
           Typed.Type.Tuple [
-            Typed.Type.Simple "Int";
+            Typed.BaseTypes.int;
             Typed.Type.Simple "Float";
           ];
-          Typed.Type.Simple "Int"
+          Typed.BaseTypes.int
         ];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Var "t0";
+          typed_local_ident_expr "hello" @@ Typed.Type.Var "t0";
           tuple_expr [
-            local_ident_expr "hello" @@ Typed.Type.Simple "Int";
-            local_ident_expr "hello" @@ Typed.Type.Var "t0";
+            typed_local_ident_expr "hello" @@ Typed.BaseTypes.int;
+            typed_local_ident_expr "hello" @@ Typed.Type.Var "t0";
           ]
         ]
-      }
-      ~expect_type: (Typed.Type.Simple "Int")
+      })
+      ~expect_type: (Typed.BaseTypes.int)
       ~errors: [
         Typed.Infer.TypeMismatch {
           type_provided = Typed.Type.Simple "Str";
@@ -307,30 +324,30 @@ open Common
       ~expect: []
 
   let test_inferred_dobule_nested_apply_mismatch () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_scheme_expr "test" @@ Typed.Type.lambda [
           Typed.Type.Simple "Str"; 
           Typed.Type.Tuple [
-            Typed.Type.Simple "Int";
+            Typed.BaseTypes.int;
             Typed.Type.Tuple [
-              Typed.Type.Simple "Int";
+              Typed.BaseTypes.int;
               Typed.Type.Simple "Float";
             ]
           ];
-          Typed.Type.Simple "Int"
+          Typed.BaseTypes.int
         ];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Var "t0";
+          typed_local_ident_expr "hello" @@ Typed.Type.Var "t0";
           tuple_expr [
-            local_ident_expr "hello" @@ Typed.Type.Simple "Int";
+            typed_local_ident_expr "hello" @@ Typed.BaseTypes.int;
             tuple_expr [
-              local_ident_expr "hello" @@ Typed.Type.Simple "Int";
-              local_ident_expr "hello" @@ Typed.Type.Var "t0";
+              typed_local_ident_expr "hello" @@ Typed.BaseTypes.int;
+              typed_local_ident_expr "hello" @@ Typed.Type.Var "t0";
             ]
           ]
         ]
-      }
-      ~expect_type: (Typed.Type.Simple "Int")
+      })
+      ~expect_type: (Typed.BaseTypes.int)
       ~errors: [
         Typed.Infer.TypeMismatch {
           type_provided = Typed.Type.Simple "Str";
@@ -340,17 +357,17 @@ open Common
       ~expect: []
 
   let test_not_a_function () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_scheme_expr "test" @@ Typed.Type.lambda [
           Typed.Type.Simple "Str"; 
           Typed.Type.Simple "Str"; 
         ];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Simple "Str";
-          local_ident_expr "hello" @@ Typed.Type.Simple "Str";
-          local_ident_expr "hello" @@ Typed.Type.Simple "Int";
+          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "hello" @@ Typed.BaseTypes.int;
         ]
-      }
+      })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
         Typed.Infer.NotFunction {
@@ -360,69 +377,69 @@ open Common
       ~expect: []
 
   let test_simple_generic () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_scheme_expr "test" @@ Typed.Type.lambda ~constr:["t"] [
           Typed.Type.Var "t"; 
           Typed.Type.Var "t"; 
         ];
         args = [
-          local_ident_expr "hello" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Str";
         ]
-      }
+      })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: []
       ~expect: []
 
   let test_simple_generic_multiparam () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_scheme_expr "test" @@ Typed.Type.lambda ~constr:["t"; "u"] [
           Typed.Type.Var "t"; 
           Typed.Type.Var "u"; 
           Typed.Type.Tuple [Typed.Type.Var "t"; Typed.Type.Var "u"]; 
         ];
         args = [
-          local_ident_expr "str" @@ Typed.Type.Simple "Str";
-          local_ident_expr "int" @@ Typed.Type.Simple "Int";
+          typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "int" @@ Typed.BaseTypes.int;
         ]
-      }
+      })
       ~expect_type: (
           Typed.Type.Tuple [
             Typed.Type.Simple "Str";
-            Typed.Type.Simple "Int"
+            Typed.BaseTypes.int
           ] 
         )
       ~errors: []
       ~expect: []
 
   let test_simple_generic_mismatch () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_scheme_expr "test" @@ Typed.Type.lambda ~constr:["t"] [
           Typed.Type.Var "t"; 
           Typed.Type.Var "t"; 
           Typed.Type.Var "t"; 
         ];
         args = [
-          local_ident_expr "str" @@ Typed.Type.Simple "Str";
-          local_ident_expr "int" @@ Typed.Type.Simple "Int";
+          typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "int" @@ Typed.BaseTypes.int;
         ]
-      }
+      })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
         Typed.Infer.TypeMismatch {
-          type_provided = Typed.Type.Simple "Int";
+          type_provided = Typed.BaseTypes.int;
           type_expected = Typed.Type.Simple "Str";
         }
       ]
       ~expect: []
 
   let test_lambda_infer () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_ident_expr "test" @@ Typed.Type.Var "a0";
         args = [
-          local_ident_expr "str" @@ Typed.Type.Simple "Str";
-          local_ident_expr "int" @@ Typed.Type.Simple "Int";
+          typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "int" @@ Typed.BaseTypes.int;
         ]
-      }
+      })
       ~expect_type: (
         (Typed.Type.lambda [
           Typed.Type.Var "t0"
@@ -432,73 +449,73 @@ open Common
       ~expect: [
         "a0", (Typed.Type.lambda [
           Typed.Type.Simple "Str";
-          Typed.Type.Simple "Int";
+          Typed.BaseTypes.int;
           Typed.Type.Var "t0"
         ]).typ
 
       ]
 
   let test_func_one_arg () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_ident_expr "int_to_int" @@ (Typed.Type.lambda [
-          Typed.Type.Simple "Int";
-          Typed.Type.Simple "Int";
+          Typed.BaseTypes.int;
+          Typed.BaseTypes.int;
         ]).typ;
         args = [
           Typed.Expr.Apply (Typed.Apply.{
             fn = global_ident_expr "fn" @@ Typed.Type.Var "a0";
             args = [
-              local_ident_expr "int" @@ Typed.Type.Simple "Int";
+              typed_local_ident_expr "int" @@ Typed.BaseTypes.int;
             ];
           })
         ]
-      }
+      })
       ~expect_type: (
-        Typed.Type.Simple "Int";
+        Typed.BaseTypes.int;
       )
       ~errors: []
       ~expect: [
         "a0", (Typed.Type.lambda [
-          Typed.Type.Simple "Int";
-          Typed.Type.Simple "Int"
+          Typed.BaseTypes.int;
+          Typed.BaseTypes.int
         ]).typ
       ]
 
   let test_func_arg_mismatch () = test 
-      ~node: Typed.Apply.{
+      ~node: (Typed.Expr.Apply Typed.Apply.{
         fn = global_ident_expr "+" @@ (Typed.Type.lambda [
-          Typed.Type.Simple "Int";
-          Typed.Type.Simple "Int";
-          Typed.Type.Simple "Int";
+          Typed.BaseTypes.int;
+          Typed.BaseTypes.int;
+          Typed.BaseTypes.int;
         ]).typ;
         args = [
           Typed.Expr.Apply (Typed.Apply.{
             fn = global_ident_expr "fn" @@ Typed.Type.Var "a0";
             args = [
-              local_ident_expr "int" @@ Typed.Type.Simple "Int";
+              typed_local_ident_expr "int" @@ Typed.BaseTypes.int;
             ];
           });
           Typed.Expr.Apply (Typed.Apply.{
             fn = global_ident_expr "fn" @@ Typed.Type.Var "a0";
             args = [
-              local_ident_expr "str" @@ Typed.Type.Simple "Str";
+              typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
             ];
           })
         ]
-      }
+      })
       ~expect_type: (
-        Typed.Type.Simple "Int";
+        Typed.BaseTypes.int;
       )
       ~errors: [
         Typed.Infer.TypeMismatch {
           type_provided = Typed.Type.Simple "Str";
-          type_expected = Typed.Type.Simple "Int";
+          type_expected = Typed.BaseTypes.int;
         }
       ]
       ~expect: [
         "a0", (Typed.Type.lambda [
-          Typed.Type.Simple "Int";
-          Typed.Type.Simple "Int"
+          Typed.BaseTypes.int;
+          Typed.BaseTypes.int
         ]).typ
       ]
 
@@ -516,9 +533,271 @@ open Common
     "function arg mismatch", `Quick, test_func_arg_mismatch
   ]
 
+  module Let = struct 
+    open Typed
+    (* TODO: open Typed *)
+    (* TODO: use test block *)
+    let test ?(errors=[]) ~stmts ~expect_type ~expect = 
+      let ctx = Typed.Infer.{
+        errors = Typed.Basket.make ();
+        tempvar = Typed.make_tempvar_gen "t";
+        store = Typed.TypeStore.make ();
+      } in
+      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Infer.empty_subst) (Typed.Block.{stmts = stmts}) in
+      check_results ~ctx ~errors ~expect_type ~expect subst typ
+
+    open Helper
+
+    let let_single () = test
+      ~stmts: [
+        let_stmt "hello" [
+          value_stmt "10" (BaseTypes.int)
+        ];
+        local_ident_stmt "hello" 
+      ]
+      ~expect_type: (
+        Typed.Type.Simple BaseTypes.int_name;
+      )
+      ~errors: []
+      ~expect: []
+      
+
+    let let_lambda () = test
+      ~stmts: [
+        let_stmt "hello" [
+          lambda_stmt ["a", Type.Var "t"] [
+            local_ident_stmt ~scheme:(Type.make_scheme [] (Type.Var "t")) "a"
+          ]
+        ];
+        local_ident_stmt "hello"
+      ]
+      ~expect_type: (
+        (Type.lambda [Type.Var "t"; Type.Var "t"]).typ;
+      )
+      ~errors: []
+      ~expect: []
+
+    let tests = [
+      "let:single", `Quick, let_single;
+      "let:lambda", `Quick, let_lambda;
+    ]
+  end
+
+  module Block = struct 
+    let test ?(errors=[]) ~stmts ~expect_type ~expect = 
+      let ctx = Typed.Infer.{
+        errors = Typed.Basket.make ();
+        tempvar = Typed.make_tempvar_gen "t";
+        store = Typed.TypeStore.make ();
+      } in
+      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Infer.empty_subst) (Typed.Block.{stmts = stmts}) in
+      check_results ~ctx ~errors ~expect_type ~expect subst typ
+      
+    let test_returns_last_statement () = test
+      ~stmts: [
+        Typed.Stmt.Expr (Typed.Expr.Tuple (Typed.Tuple.{exprs=[]}));
+        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.BaseTypes.int}))
+      ]
+      ~expect_type: (
+        Typed.BaseTypes.int;
+      )
+      ~errors: []
+      ~expect: []
+
+    let test_not_unit_result_error () = test
+      ~stmts: [
+        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="hello"; type_=Typed.BaseTypes.str}));
+        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.BaseTypes.int}))
+      ]
+      ~expect_type: (
+        Typed.BaseTypes.int;
+      )
+      ~errors: [
+        Typed.Infer.IgnoredResult {
+          type_provided = Typed.BaseTypes.str;
+        }
+      ]
+      ~expect: []
+
+    let tests = [
+      "ignored result", `Quick, test_not_unit_result_error;
+      "last statement", `Quick, test_returns_last_statement
+    ]
+  end
+
+  let single_expr_block expr = Typed.Block.{stmts = [Typed.Stmt.Expr expr]}
+  let unit_expr = Typed.Expr.Tuple (Typed.Tuple.{exprs = []})
+  module Cond = struct 
+    let no_else_ok () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [Typed.Cond.{
+          if_ = single_expr_block @@ typed_local_ident_expr "True" @@ Typed.BaseTypes.bool;
+          then_ = single_expr_block @@ unit_expr;
+        }];
+        else_ = None
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.unit;
+      )
+      ~errors: []
+      ~expect: []
+
+    let no_else_if_mismatch () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [Typed.Cond.{
+          if_ = single_expr_block @@ typed_local_ident_expr "10" @@ Typed.BaseTypes.int;
+          then_ = single_expr_block @@ unit_expr;
+        }];
+        else_ = None
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.unit;
+      )
+      ~errors: [
+        Typed.Infer.IfTypeMismatch {unexpected = Typed.BaseTypes.int}
+      ]
+      ~expect: []
+
+    let no_else_if_tuple_mismatch () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [Typed.Cond.{
+          if_ = single_expr_block @@ tuple_expr [
+            typed_local_ident_expr "10" @@ Typed.BaseTypes.int;
+            typed_local_ident_expr "10" @@ Typed.BaseTypes.int;
+          ];
+          then_ = single_expr_block @@ unit_expr;
+        }];
+        else_ = None
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.unit;
+      )
+      ~errors: [
+        Typed.Infer.IfTypeMismatch {unexpected = Typed.Type.Tuple [Typed.BaseTypes.int; Typed.BaseTypes.int]}
+      ]
+      ~expect: []
+
+    let no_else_then_mismatch () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [Typed.Cond.{
+          if_ = single_expr_block @@ tuple_expr [
+            typed_local_ident_expr "x" @@ Typed.BaseTypes.bool;
+          ];
+          then_ = single_expr_block @@ typed_local_ident_expr "10" @@ (Typed.BaseTypes.int);
+        }];
+        else_ = None
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.unit;
+      )
+      ~errors: [
+        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.int; expected = Typed.BaseTypes.unit}
+      ]
+      ~expect: []
+
+    let ternary_else_mismatch () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [Typed.Cond.{
+          if_ = single_expr_block @@ tuple_expr [
+            typed_local_ident_expr "x" @@ Typed.BaseTypes.bool;
+          ];
+          then_ = single_expr_block @@ typed_local_ident_expr "10" @@ (Typed.BaseTypes.int);
+        }];
+        else_ = Some (single_expr_block @@ typed_local_ident_expr "hello" @@ (Typed.BaseTypes.str));
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.int;
+      )
+      ~errors: [
+        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
+      ]
+      ~expect: []
+
+    let multi_cond_second_then_mismatch () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [
+          Typed.Cond.{
+            if_ = single_expr_block @@ tuple_expr [
+              typed_local_ident_expr "x" @@ Typed.BaseTypes.bool;
+            ];
+            then_ = single_expr_block @@ typed_local_ident_expr "10" @@ (Typed.BaseTypes.int);
+          };
+          Typed.Cond.{
+            if_ = single_expr_block @@ tuple_expr [
+              typed_local_ident_expr "x" @@ Typed.BaseTypes.bool;
+            ];
+            then_ = single_expr_block @@ typed_local_ident_expr "10" @@ (Typed.BaseTypes.str);
+          }
+        ];
+        else_ = Some (single_expr_block @@ typed_local_ident_expr "hello" @@ (Typed.BaseTypes.int));
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.int;
+      )
+      ~errors: [
+        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
+      ]
+      ~expect: []
+
+    let multi_cond_else_mismatch () = test
+      ~node: (Typed.Expr.Cond (Typed.Cond.{
+        cases = [
+          Typed.Cond.{
+            if_ = single_expr_block @@ tuple_expr [
+              typed_local_ident_expr "x" @@ Typed.BaseTypes.bool;
+            ];
+            then_ = single_expr_block @@ typed_local_ident_expr "10" @@ (Typed.BaseTypes.int);
+          };
+          Typed.Cond.{
+            if_ = single_expr_block @@ tuple_expr [
+              typed_local_ident_expr "x" @@ Typed.BaseTypes.bool;
+            ];
+            then_ = single_expr_block @@ typed_local_ident_expr "10" @@ (Typed.BaseTypes.int);
+          }
+        ];
+        else_ = Some (single_expr_block @@ typed_local_ident_expr "hello" @@ (Typed.BaseTypes.str));
+      }))
+      ~expect_type: (
+        Typed.BaseTypes.int;
+      )
+      ~errors: [
+        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
+      ]
+      ~expect: []
+
+
+    let tests = [
+      "no_else:ok", `Quick, no_else_ok;
+      "no_else:if_mismatch", `Quick, no_else_if_mismatch;
+      "no_else:if_tuple_mismatch", `Quick, no_else_if_tuple_mismatch;
+      "no_else:then_mismatch", `Quick, no_else_then_mismatch;
+      "ternary:else_mismatch", `Quick, ternary_else_mismatch;
+      "multi_cond:second_then_mismatch", `Quick, multi_cond_second_then_mismatch;
+      "multi_cond:else_mismatch", `Quick, multi_cond_else_mismatch;
+      (*"if_else:second_then_mismatch", `Quick, todo;
+      "if_else:else_mismatch", `Quick, todo;
+
+      "ok:without_else", `Quick, todo;
+      "err:expect_unit_without_else", `Quick, todo;*)
+    ]
+  end
+
   let run_test () = Alcotest.run "Infer" [
-    "InferTest", tests
+    "Block", Block.tests;
+    "Cond", Cond.tests;
+    "InferTest", tests;
+    "Let", Let.tests;
+    "Resolve", Resolve_test.tests;
+    (* "Block", Block_infer_test.tests *)
+    (* "Toplevel", Toplevel_infer_test.tests; *)
+    "Global", Global_infer_test.tests;
   ]
+  (* Todo Rest: 
+    - Block (inference errors)
+    - Cond 
+    - Lambda (makes correct schema)
+    - Let
+  *)
 end
 
 let () = Infer.run_test ()
