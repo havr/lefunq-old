@@ -32,14 +32,17 @@ let rec to_string = function
     |> String.concat ~sep: ", " in
     "(" ^ concat ^ ")"
 | Lambda (v, n) ->
-    let vs = to_string v in
-    let ns = to_string n in
+    let vs = match v with
+        | Lambda _ -> "(" ^ (to_string v) ^ ")" 
+        | _ -> to_string v
+    in
+    let ns = to_string n  in
     vs ^ " -> " ^ ns
 
 let scheme_to_string scheme =
     let constrs = match scheme.constr with
     | [] -> ""
-    | constrs -> "forall " ^ (String.concat ~sep: ", " constrs) ^ "."
+    | constrs -> "forall " ^ (String.concat ~sep: ", " constrs) ^ ". "
     in
     constrs ^ (to_string scheme.typ)
 

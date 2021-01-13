@@ -190,7 +190,7 @@ module Infer = struct
   })
 
   let check_results ?(errors=[]) ~ctx ~expect_type ~expect subst typ = 
-    let typ = Typed.Infer.apply_substs subst typ in
+    let typ = Typed.Subst.apply_substs subst typ in
     let results = Unify.results expect subst in
     begin 
       if not @@ Typed.Type.equals typ expect_type then
@@ -204,22 +204,10 @@ module Infer = struct
     end;
     begin 
         let errors_expected_not_found = difference 
-          ~equals: (Typed.Infer.error_equals) errors (Typed.Basket.get Typed.Infer.(ctx.errors)) in
+          ~equals: (Typed.Error.equals) errors (Typed.Basket.get Typed.Infer.(ctx.errors)) in
         let unexpected_got = difference 
-          ~equals: (Typed.Infer.error_equals) (Typed.Basket.get ctx.errors) errors in
-        let map_errors errors = errors |> List.map ~f: (fun err ->
-          match err with
-          | Typed.Infer.TypeMismatch {type_expected; type_provided} -> 
-            "TypeMismatch: expected " ^ (Typed.Type.to_string type_expected) ^ " != provided " ^ (Typed.Type.to_string type_provided)
-          | Typed.Infer.NotFunction {type_provided} -> 
-            "NotFunction: " ^ (Typed.Type.to_string type_provided)
-          | Typed.Infer.IgnoredResult {type_provided} -> 
-            "IgnoredResult: " ^ (Typed.Type.to_string type_provided)
-          | Typed.Infer.IfTypeMismatch {unexpected} -> 
-            "IfTypeMismatch: " ^ (Typed.Type.to_string unexpected)
-          | Typed.Infer.BranchTypeMismatch {unexpected; expected} -> 
-            "BranchTypeMismatch:" ^ (Typed.Type.to_string expected) ^ " != got " ^ (Typed.Type.to_string unexpected)
-        ) in
+          ~equals: (Typed.Error.equals) (Typed.Basket.get ctx.errors) errors in
+        let map_errors errors = errors |> List.map ~f:Typed.Error.to_string in
         let exp_not_found = if List.length errors_expected_not_found > 0 then
           map_errors errors_expected_not_found 
           |> String.concat ~sep: "\n" else "" in
@@ -246,7 +234,7 @@ module Infer = struct
       tempvar = Typed.make_tempvar_gen "t";
       store = Typed.TypeStore.make ();
     } in
-    let (subst, typ) = Typed.Infer.expr ~ctx (Map.empty (module String)) (Typed.Infer.empty_subst) node in
+    let (subst, typ) = Typed.Infer.expr ~ctx (Map.empty (module String)) (Typed.Subst.empty_subst) node in
     check_results ~ctx ~errors ~expect_type ~expect subst typ
 
 
@@ -272,7 +260,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
-        Typed.Infer.TypeMismatch {
+        Typed.Error.TypeMismatch {
           type_provided = Typed.Type.Simple "Float";
           type_expected = Typed.BaseTypes.int;
         }
@@ -289,7 +277,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
-        Typed.Infer.TypeMismatch {
+        Typed.Error.TypeMismatch {
           type_provided = Typed.BaseTypes.int;
           type_expected = Typed.Type.Simple "Float";
         }
@@ -316,7 +304,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.BaseTypes.int)
       ~errors: [
-        Typed.Infer.TypeMismatch {
+        Typed.Error.TypeMismatch {
           type_provided = Typed.Type.Simple "Str";
           type_expected = Typed.Type.Simple "Float";
         }
@@ -349,7 +337,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.BaseTypes.int)
       ~errors: [
-        Typed.Infer.TypeMismatch {
+        Typed.Error.TypeMismatch {
           type_provided = Typed.Type.Simple "Str";
           type_expected = Typed.Type.Simple "Float";
         }
@@ -370,7 +358,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
-        Typed.Infer.NotFunction {
+        Typed.Error.NotFunction {
           type_provided = Typed.Type.Simple "Str";
         }
       ]
@@ -425,7 +413,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.Type.Simple "Str")
       ~errors: [
-        Typed.Infer.TypeMismatch {
+        Typed.Error.TypeMismatch {
           type_provided = Typed.BaseTypes.int;
           type_expected = Typed.Type.Simple "Str";
         }
@@ -507,7 +495,7 @@ module Infer = struct
         Typed.BaseTypes.int;
       )
       ~errors: [
-        Typed.Infer.TypeMismatch {
+        Typed.Error.TypeMismatch {
           type_provided = Typed.Type.Simple "Str";
           type_expected = Typed.BaseTypes.int;
         }
@@ -543,7 +531,7 @@ module Infer = struct
         tempvar = Typed.make_tempvar_gen "t";
         store = Typed.TypeStore.make ();
       } in
-      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Infer.empty_subst) (Typed.Block.{stmts = stmts}) in
+      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Subst.empty_subst) (Typed.Block.{stmts = stmts}) in
       check_results ~ctx ~errors ~expect_type ~expect subst typ
 
     open Helper
@@ -590,7 +578,7 @@ module Infer = struct
         tempvar = Typed.make_tempvar_gen "t";
         store = Typed.TypeStore.make ();
       } in
-      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Infer.empty_subst) (Typed.Block.{stmts = stmts}) in
+      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Subst.empty_subst) (Typed.Block.{stmts = stmts}) in
       check_results ~ctx ~errors ~expect_type ~expect subst typ
       
     let test_returns_last_statement () = test
@@ -613,7 +601,7 @@ module Infer = struct
         Typed.BaseTypes.int;
       )
       ~errors: [
-        Typed.Infer.IgnoredResult {
+        Typed.Error.IgnoredResult {
           type_provided = Typed.BaseTypes.str;
         }
       ]
@@ -654,7 +642,7 @@ module Infer = struct
         Typed.BaseTypes.unit;
       )
       ~errors: [
-        Typed.Infer.IfTypeMismatch {unexpected = Typed.BaseTypes.int}
+        Typed.Error.IfTypeMismatch {unexpected = Typed.BaseTypes.int}
       ]
       ~expect: []
 
@@ -673,7 +661,7 @@ module Infer = struct
         Typed.BaseTypes.unit;
       )
       ~errors: [
-        Typed.Infer.IfTypeMismatch {unexpected = Typed.Type.Tuple [Typed.BaseTypes.int; Typed.BaseTypes.int]}
+        Typed.Error.IfTypeMismatch {unexpected = Typed.Type.Tuple [Typed.BaseTypes.int; Typed.BaseTypes.int]}
       ]
       ~expect: []
 
@@ -691,7 +679,7 @@ module Infer = struct
         Typed.BaseTypes.unit;
       )
       ~errors: [
-        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.int; expected = Typed.BaseTypes.unit}
+        Typed.Error.BranchTypeMismatch {unexpected = Typed.BaseTypes.int; expected = Typed.BaseTypes.unit}
       ]
       ~expect: []
 
@@ -709,7 +697,7 @@ module Infer = struct
         Typed.BaseTypes.int;
       )
       ~errors: [
-        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
+        Typed.Error.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
       ]
       ~expect: []
 
@@ -735,7 +723,7 @@ module Infer = struct
         Typed.BaseTypes.int;
       )
       ~errors: [
-        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
+        Typed.Error.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
       ]
       ~expect: []
 
@@ -761,7 +749,7 @@ module Infer = struct
         Typed.BaseTypes.int;
       )
       ~errors: [
-        Typed.Infer.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
+        Typed.Error.BranchTypeMismatch {unexpected = Typed.BaseTypes.str; expected = Typed.BaseTypes.int}
       ]
       ~expect: []
 
@@ -783,11 +771,11 @@ module Infer = struct
   end
 
   let run_test () = Alcotest.run "Infer" [
-    "Block", Block.tests;
+    (*"Block", Block.tests;
     "Cond", Cond.tests;
     "InferTest", tests;
     "Let", Let.tests;
-    "Resolve", Resolve_test.tests;
+    "Resolve", Resolve_test.tests;*)
     (* "Block", Block_infer_test.tests *)
     (* "Toplevel", Toplevel_infer_test.tests; *)
     "Global", Global_infer_test.tests;

@@ -204,7 +204,7 @@ and tuple () =
     and+ expr = maybe @@ binary () 
     and+ _ = expect ~ctx: "tuple" @@ ignore_newline @@ one_value (function | CloseParen -> Some() | _ -> None) in 
     match expr with
-    | None -> raise (Todo "handle units")
+    | None -> Node.Expr.Value (Node.Value.Unit)
     | Some e -> e
 and let_ () = 
     let let_rhs = choicef [

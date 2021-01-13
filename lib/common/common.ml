@@ -13,6 +13,7 @@ module Pos = struct
     type t = {row: int; col: int}
     let to_str pos = (Int.to_string pos.row) ^ ":" ^ (Int.to_string pos.col)
     let empty = {row = 0; col = 0}
+    let equals a b = (a.row = b.row && (a.col = b.col))
 end
 
 module Err = struct 
@@ -38,7 +39,7 @@ let[@inline] log args =
         let slots = Caml.Printexc.get_callstack depth |> Caml.Printexc.backtrace_slots in
         match slots with
         | Some slots -> begin
-            match Array.get slots (depth - 1) |> Caml.Printexc.Slot.location with
+            match Array.get slots (1) |> Caml.Printexc.Slot.location with
             | Some k -> k.filename ^ ":" ^ (Int.to_string k.line_number)
             | None -> "unknown"
             end

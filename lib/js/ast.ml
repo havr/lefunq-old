@@ -103,6 +103,7 @@ and Expr: sig
         | Lambda of Lambda.t 
         | Block of Block.t 
         | Parens of Expr.t
+        | Void
 end = struct
     type t = 
         | Num of Num.t 
@@ -114,6 +115,7 @@ end = struct
         | Lambda of Lambda.t 
         | Block of Block.t 
         | Parens of Expr.t
+        | Void
 end
 
 and Return: sig 
@@ -144,6 +146,7 @@ module Prn = struct
     let num n = str Num.(n.value)
     let string n = 
         str ("\"" ^ Str.(n.value) ^ "\"") 
+    let void = str "(void 0)"
 
     let rec const n = 
         let const_block = match Const.(n.expr) with
@@ -187,6 +190,7 @@ module Prn = struct
         | Expr.Lambda n -> lambda n
         | Expr.Num n -> num n
         | Expr.Ident n -> ident n
+        | Expr.Void -> void
         | Expr.Str n -> string n
         | Expr.Binary n -> binary n
         | Expr.Block n -> block n

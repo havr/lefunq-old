@@ -46,11 +46,13 @@ let ident_value name =
 let ident n = Ast.Ident.{value = ident_value Typed.Ident.(n.given_name)}
 
 let basic b =
-    if phys_equal Typed.Value.(b.type_) Common.Const.BasicTypes.str 
+    if phys_equal Typed.Value.(b.type_) Typed.BaseTypes.str 
         then Ast.Expr.Str(Ast.Str.{value = b.value})
-    else if phys_equal Typed.Value.(b.type_) Common.Const.BasicTypes.int 
+    else if phys_equal Typed.Value.(b.type_) Typed.BaseTypes.int 
         then Ast.Expr.Num(Ast.Num.{value = b.value})
-    else raise @@ Unexpected ("unexpected basic type: " ^ b.type_ ^ "(has value: " ^ b.value ^ ")")
+    else if phys_equal Typed.Value.(b.type_) Typed.BaseTypes.unit 
+        then Ast.Expr.Void
+    else raise @@ Unexpected ("unexpected basic type: " ^ (Typed.Type.to_string b.type_) ^ "(has value: " ^ b.value ^ ")")
 
 let rec apply n = begin
     let apply_seq fn = function
@@ -96,6 +98,7 @@ end and expr  = function
     | Typed.Expr.Apply m -> apply m
     | Typed.Expr.Lambda m -> lambda m
     | Typed.Expr.Cond m -> cond m
+    | Typed.Expr.Tuple _ -> raise Common.TODO
 and cond n = 
     let cond_expr = function 
         | (Typed.Stmt.Expr e) :: [] -> expr e 
@@ -111,16 +114,17 @@ and cond n =
     in Ast.Expr.Block(Ast.Block.{stmts=[cond_block]})
 and lambda n = 
     let open Base in
-    match Typed.Lambda.(n.args) |> List.rev with
+    match List.rev @@ Typed.Lambda.(n.params) with
     | [] -> raise (Unexpected "lambda without arguments")
     | first :: rest -> 
         let convert_arg = function
-            | "_" -> []
-            | a -> [a]
+            | Typed.Param.Name n -> [n]
+            | Typed.Param.Tuple _ -> raise Common.TODO
+            | Typed.Param.Unit -> []
         in
-        let inner_lambda = Ast.Lambda.{args = convert_arg first.arg; block = block (n.block.stmts)} in
+        let inner_lambda = Ast.Lambda.{args = convert_arg first.shape; block = block (n.block.stmts)} in
         Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner arg -> 
-            Ast.Lambda.{args = convert_arg arg.arg; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
+            Ast.Lambda.{args = convert_arg arg.shape; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
         ) rest)
 
 and block_stmt = function
@@ -142,6 +146,10 @@ and let_ n =
         match Typed.Block.(n.block.stmts) with
         | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr m)
         | _ -> Ast.Const.Block  (block n.block.stmts)
-    in Ast.Const.{ name = ident_value n.name; expr = const_expr }
+    in Ast.Const.{ name = ident_value n.given_name; expr = const_expr }
 
     
+let root_module root =
+    List.map Typed.Node.Module.(root.entries) ~f: (function
+        | Typed.Node.Module.Binding b -> let_ b
+    ) 

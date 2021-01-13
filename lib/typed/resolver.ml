@@ -10,14 +10,21 @@ end
 
 
 module Global = struct
+    type binding = {
+        scheme: Type.scheme;
+        global_name: string;
+    }
+
     type t = {
         parent: t option;
-        bindings: Type.scheme StringMap.t;
-        sh_bindings: int StringMap.t;
+        modname: string;
+        mutable bindings: binding StringMap.t;
+        mutable sh_bindings: int StringMap.t;
     }
 
     let root () = {
         parent = None;
+        modname = "";
         bindings = Map.empty(module String);
         sh_bindings = Map.empty(module String);
     }
@@ -25,20 +32,27 @@ module Global = struct
 (*todo: toplevel tests *)
 (*todo: connect typed to the pipeline (errors) *)
 (*todo: let recs to compile existing code *)
-    let add_binding resolver name scheme = 
-        let scope_idx = Map.find resolver.sh_bindings name 
+    let add_binding res name scheme = 
+        let scope_idx = Map.find res.sh_bindings name 
             |> Option.value ~default:1
         in
-        let scope_suffix = match scope_idx with
+        let global_prefix = match res.modname with
+        | "" -> ""
+        | modname -> modname ^ "."  ^ name
+        in
+        let global_suffix = match scope_idx with
         | 1 -> ""
         | n -> "$" ^ (Int.to_string n)
         in
-        let scope_name = name ^ scope_suffix in
+        let global_name = global_prefix ^ name ^ global_suffix in
         (* TODO: generalize as a function *)
-        let bindings' = Map.set resolver.bindings ~key: scope_name ~data: scheme in
-        let shadowing' = Map.set resolver.sh_bindings ~key: name ~data: (scope_idx + 1) in
-        let resolver' = {resolver with bindings = bindings'; sh_bindings = shadowing'} in
-        (scope_name, resolver')
+        res.bindings <- Map.set res.bindings ~key: name ~data: {
+            scheme;
+            global_name
+        };
+        (* TODO: make ordered map orsomething *)
+        res.sh_bindings <- Map.set res.sh_bindings ~key: name ~data: (scope_idx + 1);
+        global_name
 
 
     let rec lookup resolver name = 
@@ -50,24 +64,27 @@ module Global = struct
 end
 
 module Local = struct 
+    type resolved = {
+        scope_name: string;
+        scheme: Type.scheme option;
+    }
+
     type t = {
         parent: [`Local of t | `Global of Global.t | `None];
         scope: string;
-        names: string StringMap.t;
-        idents: Ident.t StringMap.t;
-        shadowing: int StringMap.t;
+        mutable names: resolved StringMap.t;
+        mutable shadowing: int StringMap.t;
     }
 
     let make global = {
         parent = `Global global;
         scope = "";
         names = Map.empty(module String);
-        idents = Map.empty(module String);
         shadowing = Map.empty(module String)
     }
 
-    let add_name local_resolver name scheme = 
-        let scope_idx = Map.find local_resolver.shadowing name 
+    let add_name res name scheme = 
+        let scope_idx = Map.find res.shadowing name 
             |> Option.value ~default:1
         in
         let scope_suffix = match scope_idx with
@@ -75,24 +92,23 @@ module Local = struct
         | n -> "$" ^ (Int.to_string n)
         in
 
-        let scope_preffix = match local_resolver.scope with
+        let scope_preffix = match res.scope with
         | "" -> ""
         | scope -> scope ^ "."
         in
 
         let scope_name = scope_preffix ^ name ^ scope_suffix in
-        let shadowing' = Map.set local_resolver.shadowing ~key: name ~data: (scope_idx + 1) in
-        let idents' = Map.set local_resolver.idents ~key: name ~data: Ident.{
-            scheme;
-            scope_name 
-        } in let resolver' = {local_resolver with idents = idents'; shadowing = shadowing'} in
-        (scope_name, resolver')
+        res.shadowing <- Map.set res.shadowing ~key: name ~data: (scope_idx + 1);
+        res.names <- Map.set res.names ~key: name ~data: {
+            scope_name;
+            scheme
+        };
+        scope_name
 
     let sub ~name parent = {
         parent = `Local parent;
         scope = parent.scope ^ "." ^ name;
         names = Map.empty(module String);
-        idents = Map.empty(module String);
         shadowing = Map.empty(module String)
     }
 

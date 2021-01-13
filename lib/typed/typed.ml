@@ -2,8 +2,6 @@ open Base
 open Common
 
 include Node
-(* type type_ = string *)
-(* TODO: use typ instead of type' and type_ *)
 
 module Type = Type 
 module Node = Node
@@ -50,6 +48,56 @@ end
 
 module Resolver = Resolver
 module Param = Param
+
+module Error = struct 
+    type t = 
+    | UndeclaredIdentifier of {
+        given_name: string;
+        pos: Common.Pos.t
+    } | TypeMismatch of {
+        type_expected: Type.t;
+        type_provided: Type.t;
+    } | NotFunction of {
+        type_provided: Type.t
+    } | IgnoredResult of {
+        unexpected: Type.t;
+    } | IfTypeMismatch of {
+        unexpected: Type.t
+    } | BranchTypeMismatch of {
+        unexpected: Type.t;
+        expected: Type.t
+    }
+
+    let equals a b = match (a, b) with
+    | UndeclaredIdentifier a, UndeclaredIdentifier b ->
+        (phys_equal a.given_name b.given_name) && (Common.Pos.equals a.pos b.pos)
+    | TypeMismatch {type_expected = te; type_provided = tp},
+      TypeMismatch {type_expected = te'; type_provided = tp'} ->
+        (Type.equals te te' && Type.equals tp tp')
+    | IgnoredResult {unexpected=u}, IgnoredResult {unexpected=u'} -> 
+        Type.equals u u'
+    | NotFunction {type_provided=tp}, NotFunction {type_provided=tp'} -> 
+        Type.equals tp tp'
+    | IfTypeMismatch {unexpected=u}, IfTypeMismatch {unexpected=u'} -> 
+        Type.equals u u'
+    | BranchTypeMismatch {unexpected=u; expected=e}, BranchTypeMismatch {unexpected=u'; expected=e'} -> 
+        (Type.equals u u' && Type.equals e e')
+    | _ -> false
+
+    let to_string = function 
+    | UndeclaredIdentifier {given_name; _} ->
+        String.concat ["Undeclared identifier: " ^ given_name]
+    | TypeMismatch {type_expected = te; type_provided = tp} ->
+        String.concat ["Type Mismatch: "; Type.to_string te; "!="; Type.to_string tp]
+    | IgnoredResult {unexpected} -> 
+        String.concat ["Ignored result: "; Type.to_string unexpected]
+    | NotFunction {type_provided=tp} -> 
+        String.concat ["Not a Function: "; Type.to_string tp]
+    | IfTypeMismatch {unexpected=u} -> 
+        String.concat ["If Type Mismtach: "; Type.to_string u]
+    | BranchTypeMismatch {unexpected=u; expected=e} -> 
+        String.concat ["Branch type mismtach: "; Type.to_string u; "!="; Type.to_string e]
+end
 
 module Resolve = struct
     let rec type_param tempvar typ shape = 
@@ -121,14 +169,12 @@ module Resolve = struct
             type_param tempvar Param.(param.type') Param.(param.shape)
         )
 
-    type error = { given_name: string; pos: Common.Pos.t }
-
     open Resolver
 
     type context = {
         (* LocalResolver? *)
         resolver: Local.t;
-        errors: error Basket.t;
+        errors: Error.t Basket.t;
         tempvar: tempvar_gen;
     }
 
@@ -143,43 +189,48 @@ module Resolve = struct
     }
 
     let ident ctx id = 
-        let resolution = Local.lookup ctx.resolver Node.Ident.(id.given_name) in
-        match resolution with
-        | Some (`Global scheme) -> 
-            match name with
-
-            (* TODO: global ids *)
-            { id with 
-                Node.Ident.resolved = Node.Ident.Local {
-                    scope_name = name;
-                    param = false;
-                }
-            }
+        match Local.lookup ctx.resolver Node.Ident.(id.given_name) with
+        | Some (`Global {global_name; scheme}) -> { id with
+            resolved = Node.Ident.Global {
+                global_name;
+            };
+            scheme = Some scheme;
+        }
+        | Some (`Local {scope_name; scheme}) -> { id with 
+            resolved = Node.Ident.Local {
+                scope_name;
+                (* TODO: do we really need it here? *)
+                param = false;
+            };
+            scheme = scheme;
+        }
         | None -> 
-            Basket.put ctx.errors {given_name = id.given_name; pos = id.pos};
+            Basket.put ctx.errors @@ Error.UndeclaredIdentifier {given_name = id.given_name; pos = id.pos};
             id
     
     let rec binding ctx node = 
-        let (scope_name, with_name) = Local.add_name ctx.resolver Let.(node.given_name) (Type.make_scheme [] Type.Unknown) in
-        let use_resolver = if node.is_rec then {ctx with resolver = with_name} else ctx in
-        ({node with 
-            block = block use_resolver Let.(node.block); 
-            scope_name = scope_name
-        }, {
-            ctx with resolver = with_name
-        })
+        match Let.(node.is_rec) with
+        | true ->
+            let scope_name = Local.add_name ctx.resolver Let.(node.given_name) None in
+            (* submodule? *)
+            { node with 
+                block = block ctx Let.(node.block); 
+                scope_name = scope_name
+            }
+        | false ->
+            let b = block ctx Let.(node.block) in
+            let scope_name = Local.add_name ctx.resolver Let.(node.given_name) None in
+            { node with block = b; scope_name }
 
     and block ctx n =
-        let (stmts, _) = stateful_map Block.(n.stmts) 
-            ~init: ctx 
-            ~f:(fun ctx -> function 
-                | Stmt.Expr n -> 
-                    (Stmt.Expr (expr ctx n), ctx)
-                | Stmt.Let n -> 
-                    let (result, new_ctx) = (binding ctx n) in
-                    (Stmt.Let result, new_ctx)
-                | Stmt.Block 
-                    _ -> raise Common.TODO (* Disallow block inside blocks *)
+        let stmts = List.map Block.(n.stmts) ~f:(function 
+            | Stmt.Expr n -> 
+                Stmt.Expr (expr ctx n)
+            | Stmt.Let n -> 
+                let result = (binding ctx n) in
+                Stmt.Let result
+            | Stmt.Block 
+                _ -> raise Common.TODO (* Disallow block inside blocks *)
         ) in Block.{stmts = stmts}
     and expr ctx = function
     | Expr.Value v -> Expr.Value v
@@ -220,31 +271,20 @@ module Resolve = struct
         in 
         
         let typed_params = type_params ctx.tempvar Lambda.(n.params) in
+        Common.log["type params:"; String.concat ~sep:"," @@ List.map n.params ~f: Param.to_string];
         let param_names = List.map typed_params ~f:param_name_list |> List.concat in
         let type_names = without_duplicates param_names in
-        let resolver_with_params = List.fold type_names
-            ~init: (Local.sub ctx.resolver ~name: "TODO")
-            ~f: (fun resolver (name, scheme) -> 
-                let (_, resolver') = Local.add_name resolver name scheme in resolver') 
-        in Lambda.{
-            params = Lambda.(n.params);
-            block = block {ctx with resolver = resolver_with_params} n.block
+        let sub = Local.sub ctx.resolver ~name: "TODO" in
+        List.iter type_names
+            ~f: (fun (name, scheme) -> 
+                ignore @@ Local.add_name sub name (Some scheme));
+        Lambda.{
+            params = typed_params;
+            block = block {ctx with resolver = sub} n.block
         }
-
-    (* let modu ~ctx m =
-        let ctx = ref ctx in
-        let entries' = List.map Node.Module.(m.entries) ~f: (function
-            | Node.Module.Binding b -> 
-                let (b', ctx') = binding (!ctx) b in
-                ctx := ctx';
-                Node.Module.Binding b'
-        ) in
-        {m with entries = entries'} *)
 end
 
 module Transform = struct
-    (* TODO: remove these transform_ prefixes *)
-    (* TODO: move Int / Str to constants *)
     (* TODO: resolve these Ast.Node.Stuff (use Node and TyNode?) *)
     let params args = 
         let rec map_arg = function
@@ -264,6 +304,7 @@ module Transform = struct
         let args = List.map ~f:expr Ast.Node.Apply.(apply.args) in
             Apply.{fn=fn; args=args}
     and value = function
+        | Ast.Node.Value.Unit -> Expr.Value (Value.{value = ""; type_ = BaseTypes.unit})
         | Ast.Node.Value.Int v -> Expr.Value (Value.{value = v.value; type_ = BaseTypes.int})
         | Ast.Node.Value.Str v -> Expr.Value (Value.{value = v.value; type_ = BaseTypes.str})
         (* TODO: return AST without parlex pos *)
@@ -329,22 +370,6 @@ module Transform = struct
 end
 
 (* TODO: move somewhere *)
-let root root_stmts = 
-    (* TODO: sigs? *)
-    let root = Resolver.Global.root () in
-    let resolver = ["println"; "+"; "-"; "*"; "/"; ">"; "<"; "$"; "|>"; "=="; "!="; "%"] 
-        |> List.fold ~init:(Resolver.Local.make root) ~f:(fun resolver name -> 
-            let (_, resolver') = Resolver.Local.add_name resolver name (Type.make_scheme [] Type.Unknown) in 
-            resolver'
-        ) in
-    let root_ctx = Resolve.make_context resolver in
-    root_stmts |> stateful_map ~init:root_ctx  ~f:(fun ctx stmt ->
-    (* let's make it work with let_ for now *)
-        let typed_let = Transform.binding stmt in
-        let (resolved, ctx') = Resolve.binding ctx typed_let in
-        (resolved, ctx')
-    ) 
-
 
 module TypeStore = struct 
     type t = {
@@ -372,50 +397,7 @@ let rec unroll_lambda (arg, ret) =
     | Type.Lambda ret -> arg :: (unroll_lambda ret)
     | t -> [t]
 
-module Infer = struct 
-    type env = Type.scheme StringMap.t
-
-    type error = TypeMismatch of {
-        type_expected: Type.t;
-        type_provided: Type.t;
-    } | NotFunction of {
-        type_provided: Type.t
-    } | IgnoredResult of {
-        type_provided: Type.t
-    } | IfTypeMismatch of {
-        unexpected: Type.t
-    } | BranchTypeMismatch of {
-        unexpected: Type.t;
-        expected: Type.t
-    }
-
-    let error_equals a b = match (a, b) with
-    | TypeMismatch {type_expected = te; type_provided = tp},
-      TypeMismatch {type_expected = te'; type_provided = tp'} ->
-        (Type.equals te te' && Type.equals tp tp')
-    | IgnoredResult {type_provided=tp}, IgnoredResult {type_provided=tp'} -> 
-        Type.equals tp tp'
-    | NotFunction {type_provided=tp}, NotFunction {type_provided=tp'} -> 
-        Type.equals tp tp'
-    | IfTypeMismatch {unexpected=u}, IfTypeMismatch {unexpected=u'} -> 
-        Type.equals u u'
-    | BranchTypeMismatch {unexpected=u; expected=e}, BranchTypeMismatch {unexpected=u'; expected=e'} -> 
-        (Type.equals u u' && Type.equals e e')
-    | _ -> false
-
-    type context = {
-        errors: error Basket.t;
-        tempvar: tempvar_gen;
-        store: TypeStore.t;
-    }
-
-    (* TODO: make_context *)
-    let make_ctx () = {
-        errors = Basket.make ();
-        tempvar = make_tempvar_gen "t";
-        store = TypeStore.make ()
-    }
-
+module Subst = struct 
     let empty_subst = Map.empty (module String)
 
     let new_subst var typ = 
@@ -435,67 +417,12 @@ module Infer = struct
                 if (Type.equals existing data) then
                     (result, errors)
                 else 
-                    (result, TypeMismatch {
-                        type_expected=existing;
-                        type_provided=data
-                    } :: errors)
+                    (result, (existing, data) :: errors)
             | None -> 
                 (Map.add_exn result ~key: key ~data: data, errors)
         )
 
     (* more elegant solution. carry them? *)
-    let flush_errors ~ctx errors = List.iter errors ~f:(fun e -> Basket.put ctx.errors e)
-
-
-    let combine_substs ~ctx src dst =
-        let (substs, errors) = combine_substs_f src dst in
-        flush_errors ~ctx errors;
-        substs
-
-    (* TODO: refactor *)
-    type unify_result = {
-        unified: Type.t StringMap.t;
-        unify_errors: error list;
-    }
-
-    let rec unify ~ctx ta tb = 
-        let mismatch = {
-            unified = empty_subst;
-            unify_errors = [
-                TypeMismatch { type_expected = ta; type_provided = tb }
-            ]
-        } in match (ta, tb) with
-        | (Type.Var va, _) -> 
-            {unified = new_subst va tb; unify_errors = []}
-        | (_, Type.Var vb) -> 
-            {unified = new_subst vb ta; unify_errors = []} 
-        | (Type.Simple sa, Type.Simple sb) ->
-            if not @@ String.equal sa sb then mismatch else 
-                {unified = empty_subst; unify_errors = []}
-        | (Type.Tuple tua, Type.Tuple tub) ->
-            if List.length tua <> List.length tub then mismatch else
-            List.fold (List.zip_exn tua tub) 
-                ~init: {unified=empty_subst; unify_errors=[]}
-                ~f: (fun result (ia, ib) -> 
-                    let {unified; unify_errors} = unify ~ctx ia ib in 
-                    let (combined, combine_errors) = combine_substs_f result.unified unified in { unified = combined;
-                        unify_errors = unify_errors @ result.unify_errors @ combine_errors;
-                    })
-        | (Type.Lambda la, Type.Lambda lb) -> begin
-            let lau = unroll_lambda la in
-            let lbu = unroll_lambda lb in
-            if List.length lau <> List.length lbu then mismatch else
-            List.fold (List.zip_exn lau lbu) 
-                ~init: {unified=empty_subst; unify_errors=[]}
-                ~f: (fun result (ia, ib) -> 
-                    let {unified; unify_errors} = unify ~ctx ia ib in 
-                    let (combined, combine_errors) = combine_substs_f result.unified unified in {
-                        unified = combined;
-                        unify_errors = unify_errors @ result.unify_errors @ combine_errors;
-                    })
-        end
-        | _ -> 
-            mismatch
 
     let rec apply_substs substs = function
     | Type.Var v -> begin match Map.find substs v with 
@@ -522,15 +449,121 @@ module Infer = struct
         in List.map params ~f:apply_param
 
     let apply_substs_to_scheme substs scheme = Type.{scheme with typ = apply_substs substs scheme.typ}
-    (* let apply_substs_to_scheme ~ctx substs scheme = 
-        {scheme with type}
-        let (substs, errors) = Type.(scheme.constr)
-            |> List.fold ~init:(substs, []) ~f:(fun (result, errors) (var_name) ->
-            let (substs, s_errors) = combine_substs_f result (new_subst var_name (ctx.tempvar ())) in
-            (substs, s_errors @ errors)
-        ) in 
-        flush_errors ~ctx errors;
-        (empty_subst, apply_substs substs scheme.typ) *)
+
+    let rec apply_substs_to_expr substs = function
+    (* apply_substs_to_type *)
+        | Expr.Value m -> 
+            Expr.Value {m with type_ = apply_substs substs m.type_}
+        | Expr.Tuple t -> 
+            Expr.Tuple { exprs = List.map t.exprs ~f:(apply_substs_to_expr substs) }
+        | Expr.Ident m -> 
+            Expr.Ident ( match m.scheme with
+                | None -> m
+                | Some scheme -> { m with scheme = Some { scheme with typ = apply_substs substs scheme.typ}}
+            )
+        | Expr.Apply m -> 
+            let fn = apply_substs_to_expr substs m.fn in
+            let args = List.map m.args ~f:(apply_substs_to_expr substs) in
+            Expr.Apply {fn; args}
+        | Expr.Lambda lam -> 
+            let params = apply_substs_to_params substs Lambda.(lam.params) in
+            let block = apply_substs_to_block substs lam.block in
+            Expr.Lambda Lambda.{params; block}
+        | Expr.Cond c -> 
+            let cases = List.map Cond.(c.cases) ~f:(fun cas ->
+                let if_ = apply_substs_to_block substs cas.if_ in
+                let then_ = apply_substs_to_block substs cas.then_ in
+                Cond.{if_; then_}
+            ) in
+            let else_ = Option.map c.else_ ~f:(apply_substs_to_block substs) in
+            Expr.Cond Cond.{cases; else_}
+
+    and apply_substs_to_block substs b =  
+        let stmts = List.map Block.(b.stmts) ~f: (function 
+            | Stmt.Block b -> Stmt.Block (apply_substs_to_block substs b)
+            | Stmt.Expr e -> Stmt.Expr (apply_substs_to_expr substs e)
+            | Stmt.Let b -> 
+                let scheme = Option.map b.scheme ~f:(apply_substs_to_scheme substs) in
+                let block = apply_substs_to_block substs b.block in
+                Stmt.Let {b with scheme; block }
+        ) in Block.{stmts}
+
+    let apply_to_error substs = function
+    | Error.IgnoredResult {unexpected} -> Error.IgnoredResult {unexpected = apply_substs substs unexpected}
+    | e -> e
+
+end
+
+module Infer = struct 
+    type env = Type.scheme StringMap.t
+
+    type context = {
+        errors: Error.t Basket.t;
+        tempvar: tempvar_gen;
+        store: TypeStore.t;
+    }
+
+    (* TODO: make_context *)
+    let make_ctx () = {
+        errors = Basket.make ();
+        tempvar = make_tempvar_gen "t";
+        store = TypeStore.make ()
+    }
+
+    open Error
+
+    let free_vars substs typ = Type.free_vars typ
+        |> Set.filter ~f: (fun name -> not @@ Map.mem substs name) 
+        |> Set.to_list
+
+    let unify ta tb = 
+        Common.log["SUUR UNIFY ("; Type.to_string ta; ") ~ ("; Type.to_string tb; ")"];
+        let errors = ref [] in
+        let rec unify' substs ta tb = 
+            let append err = errors := err :: !errors in
+            let mismatch () = append @@ TypeMismatch { type_expected = ta; type_provided = tb } in
+            let append_combine errors = List.iter errors ~f:(
+                fun (expect, got) -> append @@ TypeMismatch{type_expected = expect; type_provided = got})
+            in
+
+            match (ta, tb) with
+            | (Type.Var va, _) -> Subst.new_subst va tb
+            | (_, Type.Var vb) -> Subst.new_subst vb ta 
+            | (Type.Simple sa, Type.Simple sb) ->
+                (if not @@ String.equal sa sb then mismatch()) ;
+                Subst.empty_subst
+            | (Type.Tuple tua, Type.Tuple tub) ->
+                if List.length tua <> List.length tub then 
+                    (mismatch (); Subst.empty_subst)
+                else begin 
+                    List.fold (List.zip_exn tua tub) ~init: Subst.empty_subst ~f: (fun result (ia, ib) -> 
+                        let unified = unify' result ia ib in 
+                        let (combined, combine_errors) = Subst.combine_substs_f result unified in 
+                        append_combine combine_errors;
+                        combined
+                    )
+                end
+            | (Type.Lambda (ha, ra), Type.Lambda (hb, rb)) -> begin
+                let unified = unify' substs ha hb in 
+                Common.log[">> LAMBDA UNIFIED"; Type.to_string ha; "~"; Type.to_string hb; "=>"; Subst.substs_to_string unified];
+                let (combined, combine_errors) = Subst.combine_substs_f substs unified in 
+                append_combine combine_errors;
+                unify' combined (Subst.apply_substs combined ra) (Subst.apply_substs combined rb)
+            end
+            | _ -> 
+                Common.log [Type.to_string ta; "!="; Type.to_string tb];
+                mismatch ();
+                Subst.empty_subst
+        in (unify' (Subst.empty_subst) ta tb, !errors)
+
+    let flush_errors ~ctx errors = List.iter errors ~f:(fun e -> Basket.put ctx.errors e)
+
+    let type_mismatch_from = List.map ~f: (fun (expect, got) -> TypeMismatch{type_expected = expect; type_provided = got})
+
+    let combine_substs ~ctx src dst =
+        let (substs, errors) = Subst.combine_substs_f src dst in
+        flush_errors ~ctx (type_mismatch_from errors);
+        substs
 
     (* TODO: get rid of ctx everywhere. it's a really bad idea. rly? it seems it's awesome *)
     let rec cond ~ctx env substs n =
@@ -540,18 +573,18 @@ module Infer = struct
         in
         let (substs', unify_with) = List.fold Cond.(n.cases) ~init: (substs, unify_with) ~f: (fun (substs, unify_with) case' ->
             let (substs', typ) = block ~ctx env substs case'.if_ in
-            let if_result = unify ~ctx BaseTypes.bool typ in
-            if List.length if_result.unify_errors > 0 then begin 
+            let (unified, unify_errors) = unify BaseTypes.bool typ in
+            if List.length unify_errors > 0 then begin 
                 Basket.put ctx.errors (IfTypeMismatch { unexpected = typ });
             end;
-            let (substs', errors) = combine_substs_f substs' if_result.unified in
-            flush_errors ~ctx errors;
+            let (substs', errors) = Subst.combine_substs_f substs' unified in
+            flush_errors ~ctx (type_mismatch_from errors);
             let (substs'', then_) = block ~ctx env substs' case'.then_ in
             match unify_with with
             | Some t ->
-                let {unified; unify_errors} = unify ~ctx t then_ in
-                let (combined, errors) = combine_substs_f substs'' unified in
-                flush_errors ~ctx errors;
+                let (unified, unify_errors) = unify t then_ in
+                let (combined, errors) = Subst.combine_substs_f substs'' unified in
+                flush_errors ~ctx (type_mismatch_from errors);
                 if List.length unify_errors > 0 then begin
                     Basket.put ctx.errors (BranchTypeMismatch {expected = t; unexpected = then_});
                     (combined, Some t)
@@ -564,12 +597,12 @@ module Infer = struct
         match n.else_ with
         | Some else_ -> 
             let (substs'', typ) = block ~ctx env substs' else_ in
-            let {unified; unify_errors} = unify ~ctx unify_with' typ in
+            let (unified, unify_errors) = unify unify_with' typ in
             if List.length unify_errors > 0 then begin 
                 Basket.put ctx.errors (BranchTypeMismatch {expected = unify_with'; unexpected = typ});
             end;
-            let (substs'', errors) = combine_substs_f substs'' unified in
-            flush_errors ~ctx errors;
+            let (substs'', errors) = Subst.combine_substs_f substs'' unified in
+            flush_errors ~ctx (type_mismatch_from errors);
             (substs'', unify_with')
         | None -> (substs', BaseTypes.unit)
 
@@ -579,13 +612,17 @@ module Infer = struct
                 expr ~ctx env substs e 
             | _ -> raise Common.TODO
         in
+        
         let intern_stmt env substs = function
             | Stmt.Expr e ->
-                let (substs', typ) = expr ~ctx env substs e in
-                begin match Type.equals typ BaseTypes.unit with
+                let (substs', _) = expr ~ctx env substs e in
+                (* TODO *)
+                (* begin match Type.equals typ BaseTypes.unit with
                 | true -> ()
-                | false -> Basket.put ctx.errors (IgnoredResult {type_provided = typ})
-                end;
+                | false -> 
+                    Common.log ["<><><>\n\n"; Type.to_string typ; Type.to_string BaseTypes.unit];
+                    Basket.put ctx.errors @@ IgnoredResult {unexpected = typ}
+                end; *)
                 (substs', env)
             | Stmt.Let _let ->
                 let (substs', env') = binding ~ctx env substs _let in
@@ -612,49 +649,60 @@ module Infer = struct
         let as_list = List.map lam.params ~f: (fun param -> param.type') in
         (* TODO: Type.lambda and Type.lambda_scheme *)
         let with_result = Type.lambda (as_list @ [result_type]) in
-        Common.log ["lam"; Type.to_string result_type];
+        Common.log ["lam"; Type.to_string with_result.typ];
         (substs, with_result.typ)
 
-    and ident_expr ~ctx env substs m =
+    and ident_expr ~ctx env m =
         (* TODO: error vars *)
         let instantiate_scheme scheme =
             let new_substs = List.fold 
                 Type.(scheme.constr) 
-                ~init: substs 
+                ~init: Subst.empty_subst 
                 ~f: (fun substs var_name ->
-                    add_subst substs var_name (ctx.tempvar())
+                    Subst.add_subst substs var_name (ctx.tempvar())
             ) in 
-            let instance = apply_substs new_substs scheme.typ in
-            (* do we really need to return new substs? *)
-            (new_substs, instance)
+            Subst.apply_substs new_substs scheme.typ 
         in
         match Ident.(m.scheme) with
-        | Some s -> instantiate_scheme s
-        | None -> begin
-            match m.resolved with
+        | Some s -> 
+            let inst = instantiate_scheme s in
+            Common.log ["IDENT"; m.given_name; "{"; Type.scheme_to_string s; "} =>"; Type.to_string inst];
+            inst
+        | None -> match m.resolved with
             | Local { scope_name; _ } -> begin 
                 match Map.find env scope_name with
-                | Some s -> 
-                    instantiate_scheme s
+                | Some s -> instantiate_scheme s
                 | None -> 
-                    (* TODO: spawn error var? *)
-                    raise Common.TODO
+                    Common.log ["Unable to find"; scope_name];
+                    raise Common.TODO (* TODO: spawn error var? *)
                 end
             | _ -> 
-                (substs, ctx.tempvar())
-        end
+                ctx.tempvar()
 
-    and binding ~ctx env substs n =
-        let (substs', result_type) = block ~ctx env substs Let.(n.block) in
+    and rec_binding ~ctx env substs n =
+        let result = ctx.tempvar() in
+        (* two env' in same scope. wtf *)
+        Common.log ["Adding"; Let.(n.scope_name)];
+        let env' = Map.add_exn env ~key: Let.(n.scope_name) ~data: (Type.make_scheme [] result) in
+        let (substs', result_type) = block ~ctx env' substs Let.(n.block) in
         (* TODO: unify with let type *)
         (* TOOD: really, how about not @ Map.mem?  *)
-        let free_vars = Type.free_vars result_type
-            |> Set.filter ~f: (fun name -> Map.mem substs name) 
-            |> Set.to_list
-        in
-        let scheme = Type.make_scheme free_vars result_type in
-        let env' = Map.add_exn env ~key: (n.scope_name) ~data: scheme in
+        let scheme = Type.make_scheme (free_vars substs result_type) result_type in
+        let env' = Map.set env ~key: (n.scope_name) ~data: scheme in
         (substs', env')
+
+    and binding ~ctx env substs n =
+        (* TODO: unify them *)
+        Common.log ["@@@"; Let.(n.given_name); n.scope_name; Bool.to_string n.is_rec];
+        if Let.(n.is_rec) then rec_binding ~ctx env substs n else begin 
+            let (substs', result_type) = block ~ctx env substs Let.(n.block) in
+            (* TODO: unify with let type *)
+            (* TOOD: really, how about not @ Map.mem?  *)
+            let scheme = Type.make_scheme (free_vars substs result_type) result_type in
+            let env' = Map.add_exn env ~key: (n.scope_name) ~data: scheme in
+            (substs', env')
+        end
+
 
     and tuple_expr ~ctx env substs t = match Tuple.(t.exprs) with
         | [] -> (substs, BaseTypes.unit)
@@ -662,7 +710,7 @@ module Infer = struct
         | exprs ->
             let (substs', exprs) = List.fold exprs ~init: (substs, []) ~f:(fun (substs, result) node ->
                 let (new_substs, node_typ) = expr ~ctx env substs node in
-                let node_typ = apply_substs new_substs node_typ in
+                let node_typ = Subst.apply_substs new_substs node_typ in
                 (combine_substs ~ctx substs new_substs, node_typ :: result)
             ) in (substs', Type.Tuple (List.rev exprs))
 
@@ -675,18 +723,20 @@ module Infer = struct
         let (nodes, substs) = eval_args Apply.(m.args) in
         let result = ctx.tempvar() in
         let lam = (Type.lambda (nodes @ [result])).typ in
-        let new_subst = combine_substs ~ctx substs (new_subst v lam) in
+        let new_subst = combine_substs ~ctx substs (Subst.new_subst v lam) in
         (new_subst, result)
 
     and apply_lambda ~ctx env substs lam m = 
         let rec do' prev_substs = function
         | arg :: args, Type.Lambda (from, to') ->
             let (substs, node_typ) = expr ~ctx env prev_substs arg in
-            let unified = unify ~ctx (apply_substs substs from) node_typ in
+            let (unified, unify_errors) = unify (Subst.apply_substs substs from) node_typ in
+            Common.log ["WORKING WITH LAMBDA ARG"; Type.to_string node_typ; "~"; Type.to_string from; "=>"; Subst.substs_to_string unified];
             begin 
-                List.iter unified.unify_errors ~f:(fun err -> Basket.put ctx.errors err)
+                List.iter unify_errors ~f:(fun err -> 
+                    Basket.put ctx.errors err)
             end;
-            let combined = combine_substs ~ctx unified.unified (apply_substs_to_substs substs unified.unified) in
+            let combined = combine_substs ~ctx unified (Subst.apply_substs_to_substs substs unified) in
             begin match args with
             | [] -> (combined, Some to')
             | rest -> do' combined (rest, to')
@@ -714,76 +764,15 @@ module Infer = struct
         | Type.Lambda lam -> apply_lambda ~ctx env substs lam m
         | t ->
             Basket.put ctx.errors @@ NotFunction{type_provided=t};
-            (empty_subst, Type.Var "")
+            (Subst.empty_subst, Type.Var "")
 
     and expr ~ctx env substs = function
         | Expr.Value m -> (substs, Value.(m.type_))
         | Expr.Lambda lam -> lambda ~ctx env substs lam
-        | Expr.Ident m -> ident_expr ~ctx env substs m
+        | Expr.Ident m -> (substs, ident_expr ~ctx env m)
         | Expr.Tuple t -> tuple_expr ~ctx env substs t
         | Expr.Apply m -> apply_expr ~ctx env substs m
         | Expr.Cond c -> cond ~ctx env substs c
-
-    (* /// UNDER CONSTRUCTION /// *)
-    (* move into Substs module? *)
-    let rec apply_substs_to_expr substs = function
-    (* apply_substs_to_type *)
-        | Expr.Value m -> 
-            Expr.Value {m with type_ = apply_substs substs m.type_}
-        | Expr.Tuple t -> 
-            Expr.Tuple { exprs = List.map t.exprs ~f:(apply_substs_to_expr substs) }
-        | Expr.Ident m -> 
-            Expr.Ident (
-                match m.scheme with
-                | None -> m
-                | Some scheme -> {m with scheme = Some {scheme with typ = apply_substs substs scheme.typ}}
-            )
-        | Expr.Apply m -> 
-            let fn = apply_substs_to_expr substs m.fn in
-            let args = List.map m.args ~f:(apply_substs_to_expr substs) in
-            Expr.Apply {fn = fn; args = args}
-        | Expr.Lambda lam -> 
-            let params = apply_substs_to_params substs Lambda.(lam.params) in
-            let block = apply_substs_to_block substs lam.block in
-            Expr.Lambda Lambda.{params; block}
-        | Expr.Cond c -> 
-            let cases = List.map Cond.(c.cases) ~f:(fun cas ->
-                let if_ = apply_substs_to_block substs cas.if_ in
-                let then_ = apply_substs_to_block substs cas.then_ in
-                Cond.{if_; then_}
-            ) in
-            let else_ = c.else_ |> Option.map ~f:(apply_substs_to_block substs) in
-            Expr.Cond Cond.{cases; else_}
-
-    and apply_substs_to_block substs b =  
-        let stmts = List.map Block.(b.stmts) ~f: (function 
-            | Stmt.Block b -> Stmt.Block (apply_substs_to_block substs b)
-            | Stmt.Expr e -> Stmt.Expr (apply_substs_to_expr substs e)
-            | Stmt.Let b -> 
-                let scheme = Option.map b.scheme ~f:(apply_substs_to_scheme substs) in
-                let block = apply_substs_to_block substs b.block in
-                Stmt.Let {b with scheme; block }
-        ) in Block.{stmts}
-
-    (* === UNDER CONSTRUCTION === *)
-
-    let toplevel_binding ~ctx n = 
-        let env = (Map.empty (module String)) in
-        let substs = (Map.empty (module String)) in
-        let (_, result_type) = block ~ctx env substs Let.(n.block) in
-        (* TODO: unify with let type *)
-        let free_vars = Type.free_vars result_type
-            |> Set.filter ~f: (fun name -> Map.mem substs name) 
-            |> Set.to_list
-        in
-        let scheme = Type.make_scheme free_vars result_type in
-        {n with scheme = Some scheme; block = n.block} (* TODO: unify with the resulting substs and env *)
-
-    let modu ~ctx m = 
-        let entries' = List.map Node.Module.(m.entries) ~f: (function
-            | Binding n -> Node.Module.Binding (toplevel_binding ~ctx n)
-        ) in
-        {m with entries = entries'}
 end
 
 (* TODO: better name *)
@@ -791,35 +780,63 @@ module Global = struct
     let binding resolver node = 
         let transformed = Transform.binding node in
         let resolve_ctx = Resolve.make_context (Resolver.Local.make resolver) in
-        let (resolved, _) = Resolve.binding resolve_ctx transformed in
+        let resolved = Resolve.binding resolve_ctx transformed in
+
         let infer_ctx = Infer.make_ctx () in
-        let env = Map.empty(module String) in
         let substs = Map.empty(module String) in
-        let (substs', result_type) = Infer.block ~ctx:infer_ctx env substs Let.(resolved.block) in
-        (* TODO: unify with let type *)
-        let free_vars = Type.free_vars result_type
-            |> Set.filter ~f: (fun name -> not @@ Map.mem substs name) 
-            |> Set.to_list
+        let tempvar = make_tempvar_gen "r" in
+        let env = match Let.(resolved.is_rec) with
+        | true -> 
+            Map.add_exn (Map.empty(module String)) 
+                ~key: Let.(resolved.scope_name) 
+                ~data: (Type.make_scheme [] (tempvar()))
+        | false -> Map.empty(module String)
         in
-        Common.log[resolved.given_name; Type.to_string result_type; free_vars |> String.concat ~sep: ","; Infer.substs_to_string substs'];
-        let block = Infer.apply_substs_to_block substs' resolved.block in
+        let (substs', result_type) = Infer.block ~ctx:infer_ctx env substs Let.(resolved.block) in
+        let result_type = Subst.apply_substs substs' result_type in
+        let block = Subst.apply_substs_to_block substs' resolved.block in
         (* TODO: rename vars to match the t, u, v, w scheme *)
-        let scheme = Type.make_scheme free_vars result_type in
-        let (scope_name, resolver') = Resolver.Global.add_binding resolver Let.(resolved.given_name) scheme in
+        let scheme = Type.make_scheme (Infer.free_vars substs result_type) result_type in
+        let scope_name = Resolver.Global.add_binding resolver Let.(resolved.given_name) scheme in
         let typed_node = Let.{ resolved with
             scheme = Some scheme;
             scope_name;
             block;
         } in
-        (typed_node, resolver')
+        let resolve_errors = Basket.get resolve_ctx.errors in
+        let infer_errors = Basket.get infer_ctx.errors in
+        let errors = List.map (resolve_errors @ infer_errors) ~f:(Subst.apply_to_error substs') in
+        (typed_node, errors)
 
-    let root root_node =
-        let resolver = ref @@ Resolver.Global.root () in
+    let root resolver root_node =
+        let errors = ref [] in
         let entries = List.map Ast.Node.Root.(root_node.entries) ~f: (function
-            | Let b ->
-                let (typed, resolver') = binding !resolver b in
-                resolver := resolver';
-                Module.Binding typed
+            | Let b -> 
+                let (typ, err) = binding resolver b in
+                errors := err @ !errors;
+                Module.Binding typ;
         ) in
-        Module.{name=""; entries}
+        (Module.{name=""; entries}, !errors)
 end
+
+let root m = 
+    (* TODO: sigs? *)
+    let resolver = Resolver.Global.root () in
+    let int_op = Type.lambda [BaseTypes.int; BaseTypes.int; BaseTypes.int] in
+    let predefined = [
+        "println", Type.lambda [BaseTypes.str; BaseTypes.unit];
+        "+", int_op;
+        "-", int_op;
+        "*", int_op;
+        "/", int_op;
+        ">", int_op;
+        "<", int_op;
+        "==", int_op;
+        "!=", int_op;
+        "%", int_op;
+        "$", Type.lambda ~constr: ["t"; "u"] [Type.Lambda (Type.Var "t", Type.Var "u"); Type.Var "t"; Type.Var "u"];
+        "|>", Type.lambda ~constr: ["t"; "u"] [Type.Var "t"; Type.Lambda (Type.Var "t", Type.Var "u"); Type.Var "u"];
+    ] in
+    List.iter predefined ~f:(fun (name, scheme) -> 
+        ignore @@ Resolver.Global.add_binding resolver name scheme);
+    Global.root resolver m
