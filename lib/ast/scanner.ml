@@ -7,7 +7,7 @@ let alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 let identStart = Base.String.concat ["_"; alpha]
 let identMiddle = Base.String.concat ["_"; alpha; digit; "'"]
-let identEnd = Base.String.concat ["_"; alpha; digit; "'"; "!"]
+let identEnd = Base.String.concat ["_"; alpha; digit; "'"]
 
 let double_quote = char "\""
 
@@ -20,7 +20,19 @@ let skip = [
     oneMore (char " \t");
 ]
 
+let ident_part = seq [
+    char identStart; 
+    many (char identMiddle);
+    maybe (char identEnd)
+]
+
+let dot_qualified = seq[char "."; ident_part]
+
+let qualified_ident = seq[ident_part; maybe @@ many dot_qualified]
+
 let defs = [
+    ((fun _ -> Import), 
+        str "import");
     ((fun _ -> Let), 
         str "let");
     ((fun _ -> If), 
@@ -56,7 +68,7 @@ let defs = [
     ((fun op -> Op op),
         choice [str "%"; str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"; str "=="; str "!="]);
     ((fun s -> Ident s), 
-        seq [char identStart; many (char identMiddle); maybe (char identEnd)]
+        qualified_ident
     );
 ]
 

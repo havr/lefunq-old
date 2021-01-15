@@ -312,7 +312,7 @@ module Transform = struct
             given_name = v.value;
             resolved=Ident.Undefined;
             scheme = None;
-            pos = v.pos |> Ast.from_parlex_pos
+            pos = Span.(v.span.start) (* TODO: keep spans! *)
         })
         | Ast.Node.Value.Lambda v -> 
             let b = block v.block in

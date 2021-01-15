@@ -1,4 +1,3 @@
-open Parlex
 open Base
 
 open Comb
@@ -10,29 +9,21 @@ let make_state = State.make
 
 let let_lexeme = one_value (function Lexeme.Let -> Some () | _ -> None)
 
-let ident_lexeme = 
-    let+ id = one_value (function Lexeme.Ident value -> Some value | _ -> None) in
-    Node.Ident.{pos = id.start_pos; value = id.value}
+let ident = one_value (function Lexeme.Ident value -> Some value | _ -> None)
 
 let int_lexeme = 
     let* i = one_value (function Lexeme.Int int -> Some int | _ -> None) in 
-    return Node.Int.{pos = i.start_pos; value = i.value}
+    return Node.Int.{span = i.range; value = i.value}
 
 let int = one (fun lexeme -> 
     match lexeme.value with
-    | Lexeme.Int int -> Some (Node.Int.{pos = lexeme.start_pos; value = int})
+    | Lexeme.Int int -> Some (Node.Int.{span = lexeme.range; value = int})
     | _ -> None
 )
 
 let str = one (fun lexeme -> 
     match lexeme.value with
-    | Lexeme.Str str -> Some (Node.Str.{pos = lexeme.start_pos; value = str})
-    | _ -> None
-)
-
-let ident = one (fun lexeme -> 
-    match lexeme.value with
-    | Lexeme.Ident ident -> Some (Node.Ident.{pos = lexeme.start_pos; value = ident})
+    | Lexeme.Str str -> Some (Node.Str.{span = lexeme.range; value = str})
     | _ -> None
 )
 
@@ -42,8 +33,10 @@ let precedence = [ ["|>"]; ["$"]; ["+"; "-"]; ["*"; "/"; "%"]; [">"; "<"; "=="; 
 
 let wrap p = {fn = p.fn}
 
-let ignore_newline p =
-    let+ _ = many @@ one_value (function | Lexeme.LineBreak -> Some() | _ -> None) 
+let newlines = one_more @@ one_value (function | Lexeme.LineBreak -> Some() | _ -> None)
+
+let ignore_newline p = 
+    let+ _ = many @@ one_value (function | Lexeme.LineBreak -> Some() | _ -> None)
     and+ v = p in v
 
 let expect ?ctx ?exp p =  { fn = fun state ->
@@ -102,7 +95,7 @@ module Arg = struct
 
     let rec ident() = 
         let+ ident = one_value (function | Lexeme.Ident id -> Some id | _ -> None) in
-        Node.Arg.{ident_pos = ident.start_pos; ident = ident.value}
+        Node.Arg.{span = ident.range; ident = ident.value}
     and tuple() = 
         let+ _ = one_value (function | Lexeme.OpenParen -> Some () | _ -> None)
         (* todo: annotate *)
@@ -117,6 +110,59 @@ module Arg = struct
     ]
 end
 
+open Common
+
+let rec last_list_item = function
+| [] -> raise (Invalid_argument "no arguments are provided")
+| it :: [] -> it
+| _ :: rest -> last_list_item rest
+
+let merge_spanned fn = function
+    | [] -> raise (Invalid_argument "the function accepts one or more elements but none was provided")
+    | item :: [] -> Span.{item with value = fn [item.value]}
+    | head :: rest ->
+        let values = List.map (head :: rest) ~f:(fun spanned -> Span.(spanned.value)) in
+        Span.{
+            value = fn values;
+            range = {
+                start = head.range.start;
+                end' = (last_list_item rest).range.end'
+            }
+        }
+
+
+let import = 
+    let rec name () = 
+        let+ ident = (one_value (function Lexeme.Ident n -> Some n | _ -> None))
+        and+ modifiers = maybe @@ choicef [
+            rename;
+            names
+        ] in (ident, modifiers)
+    and rename () = 
+        let+ _ = one_value (function Lexeme.Ident "as" -> Some () | _ -> None)
+        and+ new_name = one_value (function Lexeme.Ident n -> Some n | _ -> None) in
+       Node.Import.Rename new_name
+    and names () =
+        let+ _ = one_value(function Lexeme.OpenParen -> Some () | _ -> None) 
+        and+ list = ignore_newline @@ separated_by 
+            (choice [
+                ignore_newline @@ (one_value (function Lexeme.Coma -> Some () | _ -> None));
+                map (newlines) (fun _ -> Span.empty ());
+            ])
+            (name ())
+        and+ _ = one_value(function Lexeme.CloseParen -> Some () | _ -> None) in
+        Node.Import.Names list
+    in
+    let+ keyword = one_value (function Lexeme.Import -> Some "import" | _ -> None)
+    and+ name = (one_value (function Lexeme.Ident n -> Some n | _ -> None))
+    and+ modifiers = maybe @@ choicef [ rename; names ] in
+    Node.Import.{
+        keyword;
+        name;
+        (* TODO: change kind to modifiers / refinements *)
+        kind = modifiers;
+    }
+
 let allow_operator_wrap op = ["-"; "+"] |> List.find ~f: (String.equal op) |> Option.is_none
 
 let combine_if bool parser rest =
@@ -126,8 +172,7 @@ let operator_ident =
     let+ _ = one_value (function | Lexeme.OpenParen -> Some () | _ -> None)
     and+ op = one_value (function | Lexeme.Op op -> Some (op) | _ -> None)
     and+ _ = one_value (function | Lexeme.CloseParen -> Some () | _ -> None)
-    in
-        Node.Ident.{pos = op.start_pos; value = op.value}
+    in op
 
 let rec value () = choice [
     map int (fun i -> Node.Value.Int i);
@@ -171,7 +216,7 @@ and unary () =
     and+ value = fn () in
     List.fold ops ~init:(value) ~f: (fun expr op ->
         Node.Expr.Apply Node.Apply.{
-            fn=(Node.Expr.Value (Node.Value.Ident Node.Ident.{pos = op.start_pos; value = op.value}));
+            fn=(Node.Expr.Value (Node.Value.Ident op));
             args=[expr]
         }
     )
@@ -190,7 +235,7 @@ and binary' = function
         | Some (lexeme) -> 
             let* right = binary' rest in 
             loop @@ Node.Expr.Apply Node.Apply.{
-                fn=(Node.Expr.Value (Node.Value.Ident Node.Ident.{pos = lexeme.start_pos; value = lexeme.value}));
+                fn=(Node.Expr.Value (Node.Value.Ident lexeme));
                 args=[result; right]
             }
     in
@@ -213,7 +258,7 @@ and let_ () =
     ] in
     let let_ident = choice [
         (* TODO: can it contain spaces or \nlines*)
-        ident_lexeme; operator_ident
+        ident; operator_ident
     ] in
     let* keyword = let_lexeme in
     let* rec_ = maybe @@ LexemeMatchers.rec_ in
@@ -222,12 +267,12 @@ and let_ () =
     let* _ = expect ~ctx:"let" ~exp:"=" @@ ignore_newline @@ one_value (function Lexeme.Eq -> Some () | _ -> None) in 
     let* ex = expect ~ctx: "dbg" @@ ignore_newline @@ let_rhs in
     let arg_list = match args with | [] -> None  | args -> Some Node.Arg.{args=args} in
-        return Node.Let.{pos = keyword.start_pos; is_rec = Option.is_some rec_; args = arg_list; ident = ident; expr = ex}
+        return Node.Let.{span = keyword.range; is_rec = Option.is_some rec_; args = arg_list; ident = ident; expr = ex}
 and block () = 
     let+ open_lex = one_value (function | Lexeme.OpenBlock -> Some() | _ -> None)
     and+ stmts = block_stmts() 
     and+ close_lex = expect ~ctx: "close block" @@ ignore_newline @@ one_value (function | Lexeme.CloseBlock -> Some() | _ -> None) in
-    Node.Block.{start_pos = open_lex.start_pos; end_pos = close_lex.end_pos; stmts=stmts}
+    Node.Block.{span = Span.merge open_lex.range close_lex.range; stmts=stmts}
 and block_stmts () = 
     let block_stmt () = choicef [
         (fun () -> map (let_()) (fun v -> Node.Block.Let v));

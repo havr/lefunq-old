@@ -17,6 +17,7 @@ type t = Int of string
     | Then
     | Else
     | Rec
+    | Import
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -39,6 +40,7 @@ let to_string lexeme = match lexeme with
     | Then -> "then"
     | Else -> "else"
     | Rec -> "rec"
+    | Import -> "import"
     | Error e -> "error: " ^ e
 
 let eof = Eof

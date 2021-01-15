@@ -1,20 +1,5 @@
 open Base
-
-module Pos = struct 
-    type t = {row: int; col: int; idx: int}
-    let empty = {row = 1; col = 1; idx = 0}
-    let next char pos = if (phys_equal char '\n') then 
-        {row = pos.row + 1; col = 1; idx = pos.idx + 1} 
-        else {pos with col = pos.col + 1; idx = pos.idx + 1}
-
-    let to_string pos = Base.String.concat [
-        Base.Int.to_string pos.row;
-        ":";
-        Base.Int.to_string pos.col
-    ]
-end
-
-type 't lexeme = {start_pos: Pos.t; end_pos: Pos.t; value: 't}
+open Common
 
 module Lexer = struct 
     module State = struct
@@ -115,7 +100,7 @@ module Lexer = struct
             | None -> Error Err.{pos = State.(state.pos); msg = "unexpected character " ^ (State.describe_current state)}
             | Some (make, state') ->
                 let contents = String.sub state.stream ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx) in
-                Ok (state', {start_pos = state.pos; end_pos = State.(state'.pos); value = make contents})
+                Ok (state', Span.make state.pos state'.pos (make contents))
     end
 
     module Match = struct
@@ -131,9 +116,11 @@ module Lexer = struct
     let lexeme_of map state state' =
         if not @@ phys_equal State.(state.stream) State.(state'.stream) then
             raise (Panic "states don't match")
-        else {
-            start_pos=State.(state.pos);
-            end_pos=State.(state'.pos);
+        else Span.{
+            range = {
+                start = state.pos;
+                end' = State.(state'.pos)
+            };
             value = map(String.sub State.(state.stream) ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx))
         }        
 
@@ -213,19 +200,19 @@ module Parser(Lexeme: LEXEME) = struct
     }
 
     module State = struct
-        type t = { lexemes: Lexeme.t lexeme Array.t; curr: int; last_pos: Pos.t }
+        type t = { lexemes: Lexeme.t Span.t Array.t; curr: int; last_pos: Pos.t }
 
         let make lexemes = 
             let arr = Array.of_list lexemes in
             let length = Array.length arr in
-            let value = if length = 0 then Pos.empty else (arr.(length - 1).end_pos) in 
+            let value = if length = 0 then Pos.empty else Span.(arr.(length - 1).range.end') in 
             { curr = 0; lexemes = arr; last_pos = value }
 
         let curr state = 
             if state.curr < Array.length state.lexemes then
                 state.lexemes.(state.curr)
             else 
-                {start_pos = state.last_pos; end_pos = state.last_pos; value = Lexeme.eof}
+                Span.make state.last_pos state.last_pos Lexeme.eof
 
         let next state = 
             if state.curr < Array.length state.lexemes then
@@ -233,7 +220,7 @@ module Parser(Lexeme: LEXEME) = struct
             else 
                 state
 
-        let curr_pos state = (curr state).start_pos
+        let curr_pos state = (curr state).range.start
     end
 
     type 't t = { fn: State.t -> ('t * State.t, err) Result.t }
@@ -340,4 +327,10 @@ module Parser(Lexeme: LEXEME) = struct
         let (and+) = product
         let (let*) = bind
     end
+
+    let one_more parser =
+        let open Syntax in
+        let+ first = parser
+        and+ rest = many parser in
+            first :: rest
 end

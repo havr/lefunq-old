@@ -1,6 +1,10 @@
 open Base
 
 module Const = Const
+(* TODO: remove pp.ml *)
+module Pos = Pos
+module Span = Span
+module Pp = Pp
 
 exception Unexpected
 exception Unreachable
@@ -8,13 +12,6 @@ exception TODO
 
 module StringMap = Map.M(String)
 module StringSet = Set.M(String)
-
-module Pos = struct 
-    type t = {row: int; col: int}
-    let to_str pos = (Int.to_string pos.row) ^ ":" ^ (Int.to_string pos.col)
-    let empty = {row = 0; col = 0}
-    let equals a b = (a.row = b.row && (a.col = b.col))
-end
 
 module Err = struct 
     type context = {lines: string list; start_line: int}

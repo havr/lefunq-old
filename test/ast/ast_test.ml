@@ -88,7 +88,7 @@ let unary_ok () =
     ~lexemes:[Op "-"; Op "-"; Lexeme.Int "10"]
     ~printer: Ast.Print.convert_expr
     ~expect: (Some (apply (ident_expr "-") [apply (ident_expr "-") [int_expr "10"]]))
-    
+
 let binary_simple () = 
   let open Helpers in
   let open Lexeme in
@@ -120,4 +120,97 @@ let () = Alcotest.run "Ast" [
   "Expression", ExpressionTest.tests;
 ] *)
 
-let aa = Ast.Parser.ident_lexeme
+open Common
+
+let test parser to_pp ~input ~expect =
+  let lexemes = Ast.Scanner.scan_all input |> Result.get_ok in
+  let (result, _) = Ast.Comb.(parser.fn) (Ast.Comb.State.make lexemes) |> Result.get_ok in
+  let got_ast = Pp.to_string [to_pp result] in
+  let expect_ast = Pp.to_string [to_pp expect] in
+  Alcotest.(check string) "ast match" expect_ast got_ast
+
+module Ident = struct 
+  let test_ident = test Ast.Parser.ident Ast.Node.Ident.pretty_print
+
+  let test_simple () = test_ident
+    ~input: "hello"
+    ~expect: (Span.empty "hello")
+
+  let test_qualified () = test_ident
+    ~input: "hello.world"
+    ~expect: (Span.empty "hello.world")
+
+  let tests = [
+    "simple", `Quick, test_simple;
+    "qualified", `Quick, test_qualified
+  ]
+
+end
+
+module Import = struct 
+  open Common
+
+  let test_import = test Ast.Parser.import Ast.Node.Import.tree_repr
+
+  let test_simple () = test_import 
+    ~input: "import Foo.Bar"
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      name = Span.empty "Foo.Bar";
+      kind = None;
+    }
+
+  let test_rename () = test_import 
+    ~input: "import Foo.Bar as Quux"
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      name = Span.empty "Foo.Bar";
+      kind = Some (Rename (Span.empty "Quux"))
+    }
+
+  let test_nested () = test_import 
+    ~input: {|import Foo.Bar (hello, world (foo, bar), rename as newname)|}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      name = Span.empty "Foo.Bar";
+      kind = Some (Names [
+        (Span.empty "hello", None);
+        (Span.empty "world", Some (Names [
+          (Span.empty "foo", None);
+          (Span.empty "bar", None);
+        ]));
+        (Span.empty "rename", Some (Rename (Span.empty "newname")))
+      ])
+    }
+
+  let test_newline_tolerance () = test_import 
+    ~input: {|import Foo.Bar (
+      hello
+      world ( foo
+      bar )
+      rename as newname )|}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      name = Span.empty "Foo.Bar";
+      kind = Some (Names [
+        (Span.empty "hello", None);
+        (Span.empty "world", Some (Names [
+          (Span.empty "foo", None);
+          (Span.empty "bar", None);
+        ]));
+        (Span.empty "rename", Some (Rename (Span.empty "newname")))
+      ])
+    }
+
+  let tests = [
+    "simple", `Quick, test_simple;
+    "rename", `Quick, test_rename;
+    "nested", `Quick, test_nested;
+    "newline_tolerance", `Quick, test_newline_tolerance;
+  ]
+end
+
+let () = Alcotest.run "Foo" [
+  "Ident", Ident.tests;
+  "Import", Import.tests
+]

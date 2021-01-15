@@ -1,7 +1,37 @@
-open Parlex
+open Common
+open Base
+
+module Import = struct
+    type name = (string Span.t * kind option) 
+    and kind = 
+        | Rename of string Span.t
+        | Names of name list
+
+    type t = {
+        keyword: string Span.t;
+        name: string Span.t;
+        kind: kind option;
+    }
+
+    let tree_repr node =
+        let open Common.Pp in
+        let import = [Pp.spanned node.keyword; spanned node.name] in
+        match node.kind with
+        | None -> branch import []
+        | Some (Rename new_name) -> 
+            branch (import @ [text "as"; spanned new_name]) []
+        | Some (Names names) -> 
+            let rec pp_name (name, kind) = 
+                let args = [spanned name] in
+                match kind with
+                | None -> branch args []
+                | Some (Names names) -> branch args (List.map names ~f:pp_name)
+                | Some (Rename new_name) -> branch (args @ [text "as"; spanned new_name]) []
+            in branch import (List.map names ~f:pp_name)
+end
 
 module Arg = struct 
-    type ident = {ident_pos: Pos.t; ident: string}
+    type ident = {span: Span.range; ident: string}
     type tuple = {tuple: arg list}
     and arg = 
         | Ident of ident
@@ -9,19 +39,22 @@ module Arg = struct
     type args = {args: arg list}
 end
 module rec Int: sig 
-    type t = {pos: Pos.t; value: string}
+    type t = {span: Span.range; value: string}
 end = struct 
-    type t = {pos: Pos.t; value: string}
+    type t = {span: Span.range; value: string}
 end
 and Str: sig
-    type t = {pos: Pos.t; value: string}
+    type t = {span: Span.range; value: string}
 end = struct 
-    type t = {pos: Pos.t; value: string}
+    type t = {span: Span.range; value: string}
 end
 and Ident: sig
-    type t = {pos: Pos.t; value: string}
+    type t = string Span.t
+    val pretty_print: t -> Common.Pp.branch
 end = struct 
-    type t = {pos: Pos.t; value: string}
+    type t = string Span.t
+    let pretty_print node = Pp.(branch [text "IDENT"; spanned node] [])
+
 end
 and Lambda: sig
     type t = {args: Arg.args; block: Block.t}
@@ -33,13 +66,13 @@ and Let: sig
         | Expr of Expr.t
         | Block of Block.t
 
-    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr; is_rec: bool}
+    type t = {span: Span.range; args: Arg.args option; ident: Ident.t; expr: expr; is_rec: bool}
 end = struct 
     type expr = 
         | Expr of Expr.t
         | Block of Block.t
 
-    type t = {pos: Pos.t; args: Arg.args option; ident: Ident.t; expr: expr; is_rec: bool}
+    type t = {span: Span.range; args: Arg.args option; ident: Ident.t; expr: expr; is_rec: bool}
 end
 and Block: sig
     type block_stmt = 
@@ -47,14 +80,14 @@ and Block: sig
         | Let of Let.t
         | Block of Block.t
 
-    type t = {start_pos: Pos.t; end_pos: Pos.t; stmts: block_stmt list}
+    type t = {span: Span.range; stmts: block_stmt list}
 end = struct 
     type block_stmt = 
         | Expr of Expr.t
         | Let of Let.t
         | Block of Block.t
 
-    type t = {start_pos: Pos.t; end_pos: Pos.t; stmts: block_stmt list}
+    type t = {span: Span.range; stmts: block_stmt list}
 end
 and Cond: sig
     type expr = 
