@@ -10,7 +10,7 @@ module Lexer = struct
         let isEof state = state.pos.idx >= String.length state.stream
         let isNotEof state = not (isEof state)
 
-        let make str = {stream = str; pos = Pos.empty}
+        let make str = {stream = str; pos = Pos.{row = 1; col = 1; idx = 0}}
 
         let curr lexer = String.get lexer.stream lexer.pos.idx
         let next state = {state with pos = Pos.next (curr state) state.pos}
@@ -198,6 +198,8 @@ module Parser(Lexeme: LEXEME) = struct
         caused_by: Lexeme.t;
         no_match: bool;
     }
+
+    let err_to_string e = String.concat ~sep: " " [Pos.to_string e.err_pos; e.err_msg; "caused by"; Lexeme.to_string e.caused_by];
 
     module State = struct
         type t = { lexemes: Lexeme.t Span.t Array.t; curr: int; last_pos: Pos.t }

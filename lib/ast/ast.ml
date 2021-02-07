@@ -12,15 +12,17 @@ let from_comb_err file err = Err.{
     context = None;
     file = file;
     msg = Comb.(err.err_msg);
-    pos = Comb.(err.err_pos)
+    (* TODO: move Span.range into Span.t and Span.t into Span.elem *)
+    range = Span.{start = Comb.(err.err_pos); end' = Comb.(err.err_pos)}
 }
 
-let from_lexer_err file err = Err.{
-    context = None;
-    file = file;
-    msg = Parlex.Lexer.Err.(err.msg);
-    pos = Parlex.Lexer.Err.(err.pos)
-}
+let from_lexer_err file err = 
+    Err.{
+        context = None;
+        file = file;
+        msg = Parlex.Lexer.Err.(err.msg);
+        range = Span.{start = Parlex.Lexer.Err.(err.pos); end' = Parlex.Lexer.Err.(err.pos)}
+    }
 
 let of_lexemes ~file lexemes = 
     let parser_state = Comb.State.make lexemes in

@@ -16,6 +16,8 @@ type scheme = {
 
 let make_scheme constr typ = {constr; typ}
 
+let unknown_scheme = make_scheme [] Unknown
+
 let lambda ?(constr=[]) args = 
     let rec make_typ = function
     | [] -> raise (Unreachable)

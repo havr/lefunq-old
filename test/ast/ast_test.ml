@@ -124,7 +124,11 @@ open Common
 
 let test parser to_pp ~input ~expect =
   let lexemes = Ast.Scanner.scan_all input |> Result.get_ok in
-  let (result, _) = Ast.Comb.(parser.fn) (Ast.Comb.State.make lexemes) |> Result.get_ok in
+  let (result, _) = match Ast.Comb.(parser.fn) (Ast.Comb.State.make lexemes) with
+  | Ok r -> r
+  | Error e ->
+    Alcotest.fail @@ "unexpected error: "  ^ (Ast.Comb.err_to_string e)
+  in
   let got_ast = Pp.to_string [to_pp result] in
   let expect_ast = Pp.to_string [to_pp expect] in
   Alcotest.(check string) "ast match" expect_ast got_ast
@@ -148,6 +152,30 @@ module Ident = struct
 end
 
 module Import = struct 
+  let test_import = test Ast.Parser.import Ast.Node.Import.tree_repr
+
+  let test_simple () = test_import 
+    ~input: {|import "hello"|}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      source = Span.empty "hello";
+      name = None;
+    }
+
+  let test_named () = test_import 
+    ~input: {|import Hello "hello"|}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      source = Span.empty "hello";
+      name = Some (Span.empty "Hello");
+    }
+
+  let tests = [
+    "simple", `Quick, test_simple;
+    "named", `Quick, test_named;
+  ]
+end
+(* module Import = struct 
   open Common
 
   let test_import = test Ast.Parser.import Ast.Node.Import.tree_repr
@@ -202,13 +230,35 @@ module Import = struct
       ])
     }
 
+  let test_newline_tolerance_2 () = test_import
+    ~input: {|import Foo (
+          bar
+          baz as a, quux as b
+          nested (hello, world as neko)
+      )
+    |}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      name = Span.empty "Foo";
+      kind = Some (Names [
+        (Span.empty "bar", None);
+        (Span.empty "baz", Some (Rename (Span.empty "a")));
+        (Span.empty "quux", Some (Rename (Span.empty "b")));
+        (Span.empty "nested", Some (Names [
+          (Span.empty "hello", None);
+          (Span.empty "world", Some (Rename (Span.empty "neko")));
+        ]));
+      ])
+    }
+
   let tests = [
     "simple", `Quick, test_simple;
     "rename", `Quick, test_rename;
     "nested", `Quick, test_nested;
     "newline_tolerance", `Quick, test_newline_tolerance;
+    "newline_tolerance_2", `Quick, test_newline_tolerance_2
   ]
-end
+end *)
 
 let () = Alcotest.run "Foo" [
   "Ident", Ident.tests;

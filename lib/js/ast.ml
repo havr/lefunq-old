@@ -157,7 +157,9 @@ module Prn = struct
             (str "const");
             (str n.name);
             (str "=");
-            const_block 
+            const_block;
+            (str ";");
+            newline
         ]
     and cond n =
         let ifs = (Cond.(n.conds) |> List.map(fun Cond.{if_; then_} -> 

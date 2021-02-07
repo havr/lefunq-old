@@ -11,8 +11,9 @@ let run cmds =
 
 let execute code = 
     let memfs = Make.Fs.mem () in
-    memfs.write "src.lf" code;
-    match Make.make ~fs:memfs "src.lf" "dst.js" with
+    (*TODO: proper path join / split*)
+    memfs.write "/./src.lf" code;
+    match Make.make ~fs:memfs "./src.lf" "dst.js" with
     | Ok () -> 
         (* TODO: cleanup, unique tmp file name *)
         (* TODO: cleanup *)
@@ -32,14 +33,22 @@ module EndToEnd = struct
 
     let alcotest case () =
         match execute case.code with
-        | Error es -> 
-            List.map es ~f: (fun e -> Caml.Format.sprintf "%s: %s" (Pos.to_str e.pos) e.msg)
-            |> String.concat ~sep: "\n" |>  Alcotest.fail 
+        | Error (Make.NotFound n) -> 
+            Alcotest.fail (n ^ " not found")
+                |> ignore
+        | Error Make.ReadError -> 
+            Alcotest.fail ("read error")
+                |> ignore
+        | Error (Make.SourceErrors es) -> 
+            List.map es ~f: (fun e -> Caml.Format.sprintf "%s: %s" (Span.range_str e.range) e.msg)
+                |> String.concat ~sep: "\n" 
+                |> Alcotest.fail
+                |> ignore
         | Ok lines -> 
             let got = String.concat ~sep:"\n" lines in
             if not @@ String.equal got case.expect then begin 
                 Alcotest.(fail) ("result mismatch: " ^ got ^ " expected " ^ case.expect)
-            end
+            end; ()
 
 
     let define name tests = [
@@ -55,7 +64,6 @@ end
   "Matchers", Matchers_test.tests;
 ] *)
 let () = ignore @@ EndToEnd.define "lambdas" [
-    (* move to cond *)
     {
         name = "multiple";
         expect = "a\nb\nc";
@@ -98,8 +106,8 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         name = "translates non-ident js symbols";
         expect = "42";
         code = {|
-            let __should'run''! = 42
-            let main () = println __should'run''!
+            let __should'run'' = 42
+            let main () = println __should'run''
         |}
     };
     (* move into "if" *)
@@ -154,16 +162,16 @@ let () = ignore @@ EndToEnd.define "lambdas" [
     };
     {
         name = "lambda with multiple arguments";
-        expect = "helloworld";
+        expect = "42";
         code = {|
-            let main () = \a b {let c = a + b; println c} "hello" "world"
+            let main () = \a b {let c = a + b; println c} 2 40
         |}
     };
     {
         name = "lambda that calls lambda";
-        expect = "helloworld";
+        expect = "42";
         code = {|
-            let main () = \a b {let c = a b; println c} \a {"hello" + a} "world"
+            let main () = \a b {let c = a b; println c} \a {2 + a} 40 
         |}
     };
     {

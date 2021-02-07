@@ -20,10 +20,10 @@ let split ~equals expect got =
 
 let test ?(expect_errors=[]) ~code ~expect = 
     let (modu, got_errors) = module_of code in
-    let (missing_expected, unexpected) = split ~equals: (Typed.Error.equals) expect_errors got_errors in
+    let (missing_expected, unexpected) = split ~equals: (Typed.Erro.equals) expect_errors got_errors in
     if List.length missing_expected > 0 || List.length unexpected > 0 then begin 
-        let missing_expected_str = List.map missing_expected ~f: (Typed.Error.to_string) in
-        let unexpected_str = List.map unexpected ~f: (Typed.Error.to_string) in
+        let missing_expected_str = List.map missing_expected ~f: (Typed.Erro.to_string) in
+        let unexpected_str = List.map unexpected ~f: (Typed.Erro.to_string) in
         let missing_expected_block = match missing_expected_str with 
         | [] -> ""
         | errs -> "Missing expected:\n" ^ (String.concat ~sep:"\n" errs) ^ "\n"
@@ -70,8 +70,8 @@ let test_simple_infer () =
         let b = a
     |} 
     ~expect: [
-        "a", Type.make_scheme [] Typed.BaseTypes.int;
-        "b", Type.make_scheme [] Typed.BaseTypes.int;
+        "a", Type.make_scheme [] Typed.Base_types.int;
+        "b", Type.make_scheme [] Typed.Base_types.int;
     ] 
 
 let test_simple_generics () =
@@ -83,7 +83,7 @@ let test_simple_generics () =
     |} 
     ~expect: [
         "a", Type.lambda ~constr:["p0"] [Type.Var "p0"; Type.Var "p0"];
-        "b", Type.make_scheme [] Typed.BaseTypes.int;
+        "b", Type.make_scheme [] Typed.Base_types.int;
     ] 
 
 let test_pipe_operator () =
@@ -96,20 +96,21 @@ let test_pipe_operator () =
     |}
     ~expect: [
         "a", Type.lambda ~constr:["p0"] [Type.Var "p0"; Type.Var "p0"];
-        "b", Type.make_scheme [] Typed.BaseTypes.int;
+        "b", Type.make_scheme [] Typed.Base_types.int;
     ] 
 
-let test_rec_error () =
+(* TODO: proper recursion checks *)
+(* let test_rec_error () =
     test
     ~expect_errors: []
     ~code: {|
         let rec a = a
     |}
     ~expect: [
-        "a", Type.lambda ~constr:["p0"] [Type.Var "p0"; Type.Var "p0"];
+        "a", Type.lambda ~constr:["r0"] [Type.Var "r0"; Type.Var "r0"];
     ] 
 
-let test_rec_infinite_error () =
+let test_rec_complex_error () =
     test
     ~expect_errors: []
     ~code: {|
@@ -119,13 +120,13 @@ let test_rec_infinite_error () =
         }
     |}
     ~expect: [
-        "a", Type.lambda ~constr:["p0"] [Type.Var "p0"; Type.Var "p0"];
-    ] 
+        "a", Type.lambda ~constr:["t0"] [Type.Var "t0"; Type.Var "t0"];
+    ]  *)
 
 let tests = [
-    (*"temp_simple_infer", `Quick, test_simple_infer;
+    "temp_simple_infer", `Quick, test_simple_infer;
     "test_simple_generics", `Quick, test_simple_generics;
-    "test_pipe_operator", `Quick, test_pipe_operator*)
-    (*"test_rec_error", `Quick, test_rec_error;*)
-    "test_rec_error", `Quick, test_rec_infinite_error
+    "test_pipe_operator", `Quick, test_pipe_operator;
+    (* "test_rec_error", `Quick, test_rec_error;
+    "test_rec_complex_error", `Quick, test_rec_complex_error *)
 ]
