@@ -42,6 +42,8 @@ module Lexemes = struct
     let close_paren = match_map(function | CloseParen -> Some() | _ -> None)
     let line_break = match_map(function | LineBreak -> Some() | _ -> None)
     let coma = match_map(function | Coma -> Some () | _ -> None)
+    let sig' = match_map(function | Sig -> Some () | _ -> None)
+    let func_arrow = match_map(function | FuncArrow -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -145,6 +147,43 @@ let merge_spanned fn = function
                 end' = (last_list_item rest).range.end'
             }
         }
+
+let type' =
+    let rec typ' () = choicef [
+        (fun () -> lambda ());
+        (fun () -> simple ());
+        (fun () -> tuple ());
+    ]
+    and simple () =
+        let+ id = Lexemes.ident 
+        and+ args = many (*type'*) Lexemes.ident in
+        Node.Type.Simple {
+            name = id;
+            args = List.map args ~f:(fun arg -> 
+                Node.Type.Simple {name = arg; args = []})
+        }
+    and lambda () =
+        let+ arg = choicef [
+            (fun () -> simple ());
+            (fun () -> tuple ())
+        ]
+        and+ _ = Lexemes.func_arrow
+        and+ result = expect @@ typ' () in
+        Node.Type.Lambda {
+            arg = arg;
+            result = result;
+        }
+    and tuple () = 
+        let+ _ = Lexemes.open_paren
+        and+ values = separated_by (Lexemes.coma) (typ' ())
+        and+ _ = expect @@ Lexemes.close_paren in 
+        match values with
+        | [] -> Node.Type.Unit
+        | [n] -> n
+        | items -> Node.Type.Tuple { items }
+    in typ'
+
+let scheme = type'
 
 let import = 
     let rename = 
@@ -337,7 +376,19 @@ and let_ () =
     let let_ident = choice [
         Lexemes.ident; operator_ident
     ] in
-    let+ keyword = Lexemes.let'
+    let sig' = 
+        let+ _ = Lexemes.sig'
+        and+ typ = expect @@ type' () 
+        and+ keyword = expect @@ ignore_newline @@ Lexemes.let' in
+        (Some typ), keyword
+    in
+    let nosig = 
+        let+ keyword = Lexemes.let' in
+        None, keyword
+    in
+    let+ sig', keyword = choice [
+        sig'; nosig
+    ]
     and+ rec_ = maybe @@ Lexemes.rec_
     and+ ident = expect 
         ~ctx:"let" 
@@ -354,6 +405,7 @@ and let_ () =
         | [] -> None 
         | args -> Some Node.Arg.{args=args} 
     in Node.Let.{
+        sig' = sig';
         range = Span.merge keyword.range (Node.Let.expr_range ex);
         is_rec = Option.is_some rec_;
         args = arg_list;

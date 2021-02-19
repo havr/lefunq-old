@@ -150,6 +150,30 @@ module Ident = struct
   ]
 
 end
+module Let = struct 
+  let test_let = test Ast.Parser.let_ Ast.Node.Let.tree_repr
+
+  let test_simple () = test_import 
+    ~input: {|import "hello"|}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      source = Span.empty "hello";
+      name = None;
+    }
+
+  let test_named () = test_import 
+    ~input: {|import Hello "hello"|}
+    ~expect: Ast.Node.Import.{
+      keyword = Span.empty "import";
+      source = Span.empty "hello";
+      name = Some (Span.empty "Hello");
+    }
+
+  let tests = [
+    "simple", `Quick, test_simple;
+    "named", `Quick, test_named;
+  ]
+end
 
 module Import = struct 
   let test_import = test Ast.Parser.import Ast.Node.Import.tree_repr

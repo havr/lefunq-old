@@ -31,6 +31,8 @@ let dot_qualified = seq[char "."; ident_part]
 let qualified_ident = seq[ident_part; maybe @@ many dot_qualified]
 
 let defs = [
+    ((fun _ -> Sig), 
+        str "sig");
     ((fun _ -> Import), 
         str "import");
     ((fun _ -> Let), 
@@ -55,6 +57,8 @@ let defs = [
         oneMore @@ char ";");
     ((fun _ -> OpenBlock), 
         char "{");
+    ((fun _ -> FuncArrow), 
+        str "->");
     ((fun _ -> CloseBlock), 
         char "}");
     ((fun _ -> OpenParen), 

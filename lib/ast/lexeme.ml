@@ -18,6 +18,8 @@ type t = Int of string
     | Else
     | Rec
     | Import
+    | Sig
+    | FuncArrow
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -41,6 +43,8 @@ let to_string lexeme = match lexeme with
     | Else -> "else"
     | Rec -> "rec"
     | Import -> "import"
+    | Sig -> "sig"
+    | FuncArrow -> "->"
     | Error e -> "error: " ^ e
 
 let eof = Eof

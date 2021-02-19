@@ -210,16 +210,14 @@ let import resolve_source resolver node =
     | Error (SystemError) ->
         errors := (Erro.SourceSystemError {source = node.source}) :: !errors;
         node
-    | Ok source_scope ->
+    | Ok (resolved_source, source_scope) ->
         let names = List.map node.names ~f:(fun {name; path; _} -> 
             match lookup_path source_scope path with
             | Error e -> 
                 errors := e :: !errors;
                 Node.Import.{name; path; resolved = None}
             | Ok r ->
-                Option.iter r.modu ~f: (fun modu -> Common.log["modu"; Symbol.Id.to_string modu.id]);
-                Option.iter r.binding ~f: (fun bi -> Common.log["binding"; Symbol.Id.to_string bi.internal]);
                 Resolver.Scope.import resolver name.value r;
                 Node.Import.{name; path; resolved = Some r}
-        ) in {node with names}
+        ) in {node with names; resolved_source}
     in (node', !errors)

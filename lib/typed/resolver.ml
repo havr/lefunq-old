@@ -110,7 +110,7 @@ module Scope = struct
         set_resolution scope exposed (fun res -> { res with
             binding = Some Symbol.Binding.{
                 internal = id;
-                exposed = Symbol.Id.make scope.path exposed;
+                exposed = id; (*Symbol.Id.make scope.path exposed;*)
                 scheme
             }
         });

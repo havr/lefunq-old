@@ -12,8 +12,8 @@ let run cmds =
 let execute code = 
     let memfs = Make.Fs.mem () in
     (*TODO: proper path join / split*)
-    memfs.write "/./src.lf" code;
-    match Make.make ~fs:memfs "./src.lf" "dst.js" with
+    memfs.write "/src.le" code;
+    match Make.make ~fs:memfs "/src.le" "dst.js" with
     | Ok () -> 
         (* TODO: cleanup, unique tmp file name *)
         (* TODO: cleanup *)
@@ -58,6 +58,19 @@ module EndToEnd = struct
     ]
 end
 
+let sigs = ignore @@ EndToEnd.define "sigs" [
+    {
+        name = "working";
+        expect = "hello";
+        code = {|
+            sig Str -> Str 
+            let f x = x
+            let main = {
+                println (f "hello")
+            }
+        |}
+    }
+]
 
 (* let () = Alcotest.run "Parlex" [
   "Applicative", Applicative_test.tests;
@@ -70,7 +83,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         code = {|
             // comment
             let fn a = if a > 0 then "a" else if a < 0 then "b" else "c"
-            let main () = {
+            let main = {
                 let a = fn 1
                 println a
                 let b = fn (-1)
@@ -88,7 +101,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
             let (|>) x f = f x 
             let ($) f x = f x
             let add a b = a + b
-            let main () = add 2 
+            let main = add 2 
                 $ 40 
                 |> println
         |}
@@ -98,7 +111,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         expect = "42";
         code = {|
             let (|>) x f = f x 
-            let main () = 42 |> println
+            let main = 42 |> println
         |}
     };
     (* move into "idens" *)
@@ -107,7 +120,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         expect = "42";
         code = {|
             let __should'run'' = 42
-            let main () = println __should'run''
+            let main = println __should'run''
         |}
     };
     (* move into "if" *)
@@ -116,7 +129,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         expect = "more\nless\nequal";
         code = {|
             let if_chain n = if n > 0 then "more" else if n < 0 then "less" else "equal"
-            let main () = {
+            let main = {
                 println (if_chain 1)
                 println (if_chain (-1))
                 println (if_chain 0)
@@ -133,7 +146,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
                     n * (fact (n - 1)) 
                 else 
                     1
-            let main () = println (fact 6)
+            let main = println (fact 6)
         |}
     };
 
@@ -142,14 +155,14 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         name = "js is precedence-aware when it puts parens";
         expect = "189";
         code = {|
-            let main () = println ((1 + 2) * (3 + 4) * (4 + 5))
+            let main = println ((1 + 2) * (3 + 4) * (4 + 5))
         |}
     };
     {
         name = "parses multiple parens correctly";
         expect = "triple_parens";
         code = {|
-            let main () = println ((("triple_parens")))
+            let main = println ((("triple_parens")))
         |}
     };
     (* 123123 *)
@@ -157,21 +170,21 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         name = "test";
         expect = "hello, world";
         code = {|
-            let main () = println "hello, world"
+            let main = println "hello, world"
         |}
     };
     {
         name = "lambda with multiple arguments";
         expect = "42";
         code = {|
-            let main () = \a b {let c = a + b; println c} 2 40
+            let main = \a b {let c = a + b; println c} 2 40
         |}
     };
     {
         name = "lambda that calls lambda";
         expect = "42";
         code = {|
-            let main () = \a b {let c = a b; println c} \a {2 + a} 40 
+            let main = \a b {let c = a b; println c} \a {2 + a} 40 
         |}
     };
     {
@@ -179,7 +192,17 @@ let () = ignore @@ EndToEnd.define "lambdas" [
         expect = "42";
         code = {|
             let myfn a b = a + b
-            let main () = {let a = myfn 40 2; println a}
+            let main = {let a = myfn 40 2; println a}
+        |}
+    };
+    (* language fetaures *)
+    {
+        name = "type";
+        expect = "42";
+        code = {|
+            let a: Int = 40
+            let b: Int = 2
+            let main = println (a + b)
         |}
     };
 ]

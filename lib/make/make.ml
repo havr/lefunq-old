@@ -121,7 +121,6 @@ module Frontend = struct
             | [] -> ctx.config.fs.cwd ()
         in
         let abs_path = ensure_extension (source_path cwd source) in
-        Common.log ["RESOLVING"; cwd; source; abs_path];
         match Fs.(ctx.config.fs.exists) abs_path with
         | false -> None
         | true -> Some abs_path
@@ -229,15 +228,24 @@ module Frontend = struct
                         Error (Typed.Resolve.CyclicDependency loop)
                     | None ->
                         match Map.find ctx.processed file_name with
-                        | Some r -> Ok Typed.Resolver.Scope.{ 
-                            modu = Some r; binding = None; typedef = None }
+                        | Some r -> 
+                            let scope = Typed.Resolver.Scope.{ 
+                                modu = Some r;
+                                binding = None;
+                                typedef = None
+                            } in
+                            Ok (file_name, scope)
                         | None ->
                             match compile (file_name :: import_stack) file_name with
                             | Error `NotFound -> Error Typed.Resolve.SourceNotFound
                             | Error `SourceErrors -> Error Typed.Resolve.SourceError
                             | Error _ -> Error Typed.Resolve.SourceNotFound
-                            | Ok resolved -> Ok Typed.Resolver.Scope.{ 
-                                modu = Some resolved; binding = None; typedef = None }
+                            | Ok resolved -> 
+                                let scope = Typed.Resolver.Scope.{ 
+                                    modu = Some resolved; 
+                                    binding = None;
+                                    typedef = None 
+                                } in Ok (file_name, scope)
         and compile import_stack file_name = 
                 match ctx.config.fs.read file_name with
                 | None -> Error `ReadError
@@ -358,15 +366,17 @@ module JsBackend = struct
         Js.Ast.Printer.str (header main) printer;
         {config; printer}
 
-    let require_nodes root = 
+    let require_nodes ~source root = 
         let open Typed.Node in 
         let collect_global_deps root = 
             let order = ref [] in
             let dups = ref (Set.empty(module String)) in
-            let add_dep dep = if (not @@ Set.mem !dups dep) && (not @@ String.is_empty dep) then begin 
-                order := dep :: !order; 
-                dups := Set.add !dups dep
-            end in
+            let add_dep dep = 
+                let skip = (Set.mem !dups dep) || (String.is_empty dep) || (String.equal dep source) in
+                if not skip then begin 
+                    order := dep :: !order; 
+                    dups := Set.add !dups dep
+                end in
             let rec block b = List.iter Block.(b.stmts) ~f:(function
                 | Stmt.Expr e -> expr e 
                 | Stmt.Block bs -> block bs
@@ -375,7 +385,7 @@ module JsBackend = struct
             and expr = function
                 | Value _ -> ()
                 (* | Ident _ -> () *)
-                | Ident id -> add_dep (Option.value_exn id.resolved).source 
+                | Ident id -> Common.log[(Option.value_exn id.resolved).source]; add_dep (Option.value_exn id.resolved).source 
                 | Apply app -> 
                     expr app.fn;
                     List.iter app.args ~f:expr
@@ -392,7 +402,7 @@ module JsBackend = struct
                 List.iter Module.(m.entries) ~f:(function
                 | Module.Binding b -> block b.block
                 | Module.Import im -> 
-                    add_dep im.source.value
+                    add_dep im.resolved_source
             ) 
             in modu root; !order
         in 
@@ -428,8 +438,9 @@ module JsBackend = struct
         )
 
     let write_module backend source node export =
-        let (requires, mapping) = require_nodes node in
+        let (requires, mapping) = require_nodes ~source node in
         let ctx = Js.Convert.{
+            source=source;
             required_sources = Map.of_alist_exn(module String) mapping;
         } in
         let body = Typed.Node.Module.(node.entries) |> List.filter_map ~f:(function
@@ -464,4 +475,3 @@ let make ~fs in_ out =
     | Error e -> 
         JsBackend.rollback backend;
         Error e
-

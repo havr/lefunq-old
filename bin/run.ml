@@ -17,6 +17,5 @@ let main args =
     | Ok _ ->
         Stdio.print_endline tmp_file;
         run_node tmp_file
-    | Error es -> 
-        List.iter es ~f:(Cli_err.print)
+    | Error e -> Cli_err.print e
     end

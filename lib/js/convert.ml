@@ -1,6 +1,17 @@
 open Base
 (* open Common *)
 
+(*
+
+type List t = foreign "List"
+
+module List = {
+    let _foo: Int -> Int = foreign "int"
+    let foo &quux &bar= _foo (quux + bar)
+}
+
+*)
+
 let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"; "=="; "!="; "%"]
 
 let is_js_operator ident = List.exists ~f:((String.equal) ident) js_operators
@@ -52,6 +63,7 @@ end
 open Common
 
 type ctx = {
+    source: string;
     required_sources: string StringMap.t
 }
 
@@ -65,9 +77,12 @@ let ident ~ctx n =
     let value = match id.source with
     | "" -> ident_value Typed.Ident.(n.given_name)
     | source -> 
-        match Map.find ctx.required_sources source with
-        | Some obj -> ident_value (obj ^ "." ^ id.name)
-        | None -> raise @@ Invalid_argument ("Source not found: " ^ (Typed.Symbol.Id.to_string id))
+        if String.equal ctx.source source then 
+            ident_value id.name
+        else
+            match Map.find ctx.required_sources source with
+            | Some obj -> ident_value (obj ^ "." ^ id.name)
+            | None -> raise @@ Invalid_argument ("Source not found: " ^ (Typed.Symbol.Id.to_string id))
     in Ast.Ident.{value}
 
 let basic b =

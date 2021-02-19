@@ -1,6 +1,20 @@
 open Common
 open Base
 
+module Type = struct 
+    type t = Simple of {
+        name: string Span.t;
+        args: t list;
+    }
+    | Lambda of {
+        arg: t;
+        result: t;
+    } 
+    | Tuple of {
+        items: t list;
+    }
+    | Unit
+end
 module Import = struct 
     type name = {
         name: string Span.t;
@@ -116,6 +130,7 @@ and Let: sig
         | Block of Block.t
 
     type t = {
+        sig': Type.t option;
         range: Span.range;
         args: Arg.args option;
         ident: Ident.t;
@@ -130,6 +145,7 @@ end = struct
         | Block of Block.t
 
     type t = {
+        sig': Type.t option;
         range: Span.range;
         args: Arg.args option;
         ident: Ident.t;

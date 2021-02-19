@@ -11,5 +11,4 @@ let args =
 let main args = 
     match Make.make ~fs:Make.Fs.local args.src args.dst with
     | Ok _ -> ()
-    | Error es -> 
-        List.iter es ~f:(Cli_err.print)
+    | Error e -> Cli_err.print e
