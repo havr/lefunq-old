@@ -4,16 +4,15 @@ module Lexeme = struct
   let eof = "eof"
 end
 
-open Parlex
-
 module Parser = Parlex.Parser(Lexeme)
 
 open Parser
 open Parser.Syntax
+open Common
 
 let make_fake strs = 
   (* let open Parlex.Lexer in *)
-  List.map (fun str -> {value = str; start_pos = Pos.empty; end_pos = Pos.empty}) strs
+  List.map (fun str -> Span.make Pos.empty Pos.empty str) strs
   |> Parser.State.make
 
 let parser = begin

@@ -56,10 +56,6 @@ module TypeStore = struct
 end
 
 
-let rec unroll_lambda (arg, ret) =
-    match ret with
-    | Type.Lambda ret -> arg :: (unroll_lambda ret)
-    | t -> [t]
 
 module Subst = struct 
     let empty_subst = Map.empty (module String)
@@ -109,6 +105,8 @@ module Subst = struct
 
     let rec apply_substs_to_expr substs = function
     (* apply_substs_to_type *)
+        | Expr.Li li -> Expr.Li {li with items = List.map li.items ~f: (apply_substs_to_expr substs)}
+        | Expr.Foreign f -> Expr.Foreign f
         | Expr.Value m -> 
             Expr.Value {m with type_ = apply_substs substs m.type_}
         | Expr.Tuple t -> 
@@ -189,6 +187,8 @@ module Infer = struct
         mutable substs: Type.t StringMap.t
     }
 
+    let make_env () = Map.empty(module String)
+
     (* TODO: make_context *)
     let make_ctx ~env = {
         env;
@@ -219,8 +219,8 @@ module Infer = struct
                 Subst.new_subst va tb
             | (_, Type.Var vb) -> 
                 Subst.new_subst vb ta 
-            | (Type.Simple sa, Type.Simple sb) ->
-                if not @@ String.equal sa sb then begin 
+            | (Type.Simple _, Type.Simple _) ->
+                if not @@ Type.equals ta tb then begin 
                     mismatch()
                 end;
                 Subst.empty_subst
@@ -467,6 +467,26 @@ module Infer = struct
             ctx_add_errors ~ctx [err];
             (Type.Var "")
 
+    and list ~ctx n = match Li.(n.items) with
+        | [] -> (Base_types.list (ctx.tempvar()))
+        | single :: [] ->
+            Base_types.list (expr ~ctx single)
+        | first :: rest ->
+            let first_t = expr ~ctx first in
+            let _ = List.map rest ~f: (fun e ->
+                let t = expr ~ctx e in
+                let errors = unify_ctx ~ctx first_t t in
+                (if List.length errors > 0 then (
+                    ctx_add_errors ~ctx [
+                        ListItemTypeMismatch {
+                            range = Expr.range e;
+                            expected = first_t;
+                            unexpected = t;
+                        }
+                    ]
+                ));
+                first_t
+            ) in Base_types.list (first_t)
     and expr ~ctx = function
         | Expr.Value m -> Value.(m.type_)
         | Expr.Ident m -> ident_expr ~ctx m
@@ -474,15 +494,16 @@ module Infer = struct
         | Expr.Tuple t -> tuple_expr ~ctx t
         | Expr.Apply m -> apply_expr ~ctx m
         | Expr.Cond c -> cond ~ctx c
+        | Expr.Foreign _ -> (ctx.tempvar ())
+        | Expr.Li l -> Common.log["123"]; list ~ctx l
 end
 
 (* TODO: better name *)
 module Global = struct 
-    let binding resolver node = 
+    let binding ~source resolver node = 
         let transformed = Transform.binding node in
-        let resolve_ctx = Resolve.make_context (Resolver.Scope.sub_local resolver) in
+        let resolve_ctx = Resolve.make_context ~source (Resolver.Scope.local_root resolver) in
         let resolved = Resolve.binding resolve_ctx transformed in
-
         let env = match Let.(resolved.is_rec) with
         | true -> 
             Map.add_exn (Map.empty(module String)) 
@@ -493,9 +514,17 @@ module Global = struct
         let infer_ctx = Infer.make_ctx ~env in
         let result_type = Infer.block ~ctx: infer_ctx Let.(resolved.block) in
         let result_type = Infer.apply_substs ~ctx: infer_ctx result_type in
+        let result_errors = Infer.unify_ctx ~ctx: infer_ctx (resolved.result) result_type in 
         let block = Subst.apply_substs_to_block infer_ctx.substs resolved.block in
-        (* TODO: rename vars to match the t, u, v, w scheme *)
-        let scheme = Type.make_scheme (Infer.free_vars ~ctx: infer_ctx result_type) result_type in
+
+        let result_lambda = (Let.(resolved.params) 
+            |> List.map ~f:(fun p -> Param.(p.type'))) 
+                @ [resolved.result]
+            |> Type.Lambda.make
+            |> Subst.apply_substs infer_ctx.substs
+        in
+        let scheme = Type.make_scheme (Infer.free_vars ~ctx: infer_ctx result_lambda) result_lambda in
+        (* *)
         let scope_name = Resolver.Scope.add_binding resolver Let.(resolved.given_name) scheme in
             (* TODO: proper names *)
         let typed_node = Let.{ resolved with
@@ -505,7 +534,7 @@ module Global = struct
         } in
         let resolve_errors = resolve_ctx.errors in
         let infer_errors = infer_ctx.errors in
-        let errors = List.map (resolve_errors @ infer_errors) ~f:(Subst.apply_to_error infer_ctx.substs) in
+        let errors = List.map (resolve_errors @ result_errors @ infer_errors) ~f:(Subst.apply_to_error infer_ctx.substs) in
         (typed_node, errors)
     
     let try_map list ~f =
@@ -521,16 +550,14 @@ module Global = struct
         (* TODO: Symbol.Module / Typedef.Module / Def.Module *)
         (* TODO: Symbol.Id / some global id *)
         (* s/typedefs/typs in Symbol.t: typedef is type definition *)
-        Common.log[source];
-
+        Common.log["123"];
         let entries = try_map Ast.Node.Root.(root_node.entries) ~f:(function
             | Let b -> 
-                let (typ, errs) = binding resolver b in
-                begin match List.length errs with
-                | 0 ->
-                    Ok (Module.Binding typ)
-                | _ -> Error errs
-                end
+                let (typ, errs) = binding ~source resolver b in
+                Common.log["let it b"];
+                (match errs with 
+                    | [] -> Ok (Module.Binding typ)
+                    | _ -> Error errs)
             | Import im -> 
                 let (import, errs) = Resolve.import resolve_source resolver (Transform.import im) in
                 if List.length errs > 0 then Error errs else Ok (Module.Import import)
@@ -552,9 +579,11 @@ module Global = struct
 end
 
 let root ~source ~resolve_source m = 
+    Common.log["213"];
     let int_op = Type.lambda [Base_types.int; Base_types.int; Base_types.int] in
     let cmp_op = Type.lambda [Base_types.int; Base_types.int; Base_types.bool] in
     let predefined = [
+        "foreign", Type.lambda ~constr: ["t"; "r"] [Base_types.str; Type.Var "t"; Type.Var "r"];
         "println", Type.lambda ~constr: ["t"] [Type.Var "t"; Base_types.unit];
         "+", int_op;
         "-", int_op;

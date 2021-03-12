@@ -4,6 +4,13 @@ open Node
 module TyNode = Node
 module AstNode = Ast.Node
 
+let rec typ = function
+    | AstNode.Type.Lambda {arg; result} -> Type.Lambda (typ arg, typ result)
+    (* TODO: type params *)
+    | AstNode.Type.Simple {name; _} -> Type.Simple (name.value, [])
+    | AstNode.Type.Tuple {items} -> Type.Tuple (items |> List.map ~f: typ)
+    | AstNode.Type.Unit -> Base_types.unit 
+
 let import import = 
     let rec nested_names path names = 
         List.concat @@ List.map names ~f:(fun entry ->
@@ -37,10 +44,11 @@ let import import =
         names = names 
     } *)
 
+
 let params args = 
     let rec map_arg = function
     | Ast.Node.Arg.Ident m -> 
-        Param.{shape = Param.Name m.ident; type' = Type.Unknown}
+        Param.{shape = Param.Name (Param.{given = m.ident; resolved = ""}); type' = Type.Unknown}
     | Ast.Node.Arg.Tuple m -> begin 
         match m.tuple with 
         | [] -> Param.{shape = Param.Unit; type' = Base_types.unit}
@@ -55,6 +63,7 @@ let rec apply apply =
     let args = List.map ~f:expr Ast.Node.Apply.(apply.args) in
         Node.Apply.{fn=fn; args=args; range = apply.range}
 and value = function
+    | Ast.Node.Value.Foreign f -> Expr.Foreign (Foreign.{range = f.range; name = f.value; scheme = None})
     | Ast.Node.Value.Unit u -> Expr.Value (Value.{range = u.range; value = ""; type_ = Base_types.unit})
     | Ast.Node.Value.Int int -> Expr.Value (Value.{range = int.range; value = int.value; type_ = Base_types.int})
     | Ast.Node.Value.Str str -> Expr.Value (Value.{range = str.range; value = str.value; type_ = Base_types.str})
@@ -65,6 +74,16 @@ and value = function
         resolved = None;
         scheme = None;
     })
+    | Ast.Node.Value.Tuple tu ->
+        Expr.Tuple (Tuple.{
+            range = tu.range;
+            exprs = List.map ~f:expr tu.exprs
+        })
+    | Ast.Node.Value.Li li -> 
+        Expr.Li (Li .{
+            range = li.range;
+            items = List.map ~f:expr li.items;
+        })
     | Ast.Node.Value.Lambda lam -> 
         let b = block lam.block in
         let a = params lam.args.args in
@@ -101,18 +120,19 @@ and binding_expr = function
     | Ast.Node.Let.Block e -> block e
 and binding n = 
     (* todo: s/args/params in paraser*)
-    let t_expr = match n.args with
-        | None -> binding_expr n.expr
-        | Some {args} ->
-            let params = params args in
-            let block = binding_expr (n.expr) in
-            let stmt = Stmt.Expr(Expr.Lambda(Lambda.{params; block; range = n.range})) in
-            Block.{stmts = [stmt]; range = block.range}
-    in Let.{
+    let params = match n.args with
+        | None -> []
+        | Some {args} -> params args
+    in
+    Let.{
         range = n.range;
         given_name = n.ident.value;
         scope_name = "";
-        block = t_expr;
+        block = binding_expr n.expr;
         is_rec = n.is_rec;
-        scheme = None
+        scheme = None;
+        (* use sigt everywhere *)
+        sigt = Option.map ~f:(typ) n.sig';
+        params = params;
+        result = Type.Unknown
     }

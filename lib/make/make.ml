@@ -172,7 +172,14 @@ module Frontend = struct
         Common.Err.{
             file;
             range;
-            msg = "Then branch doesn't match. Unexpected " ^ (Typed.Type.to_string unexpected) ^ " expecting " ^ (Typed.Type.to_string expected);
+            msg = "The branch doesn't match. Unexpected " ^ (Typed.Type.to_string unexpected) ^ " expecting " ^ (Typed.Type.to_string expected);
+            context = None
+        }
+    | Typed.Erro.ListItemTypeMismatch { unexpected; expected; range } -> 
+        Common.Err.{
+            file;
+            range;
+            msg = "The list has unexpected type " ^ (Typed.Type.to_string unexpected) ^ " expecting " ^ (Typed.Type.to_string expected);
             context = None
         }
         (* TODO:s/list/imports or chains *)
@@ -366,17 +373,27 @@ module JsBackend = struct
         Js.Ast.Printer.str (header main) printer;
         {config; printer}
 
-    let require_nodes ~source root = 
+    let require_nodes ~foreign_bindings ~source root = 
         let open Typed.Node in 
+        let x = ref 0 in
+        let convert_var_name _ = 
+            let name = "__" ^ (Int.to_string !x) in
+            x := !x + 1;
+            name
+        in
         let collect_global_deps root = 
             let order = ref [] in
             let dups = ref (Set.empty(module String)) in
-            let add_dep dep = 
+            let add_dep ?name dep = 
                 let skip = (Set.mem !dups dep) || (String.is_empty dep) || (String.equal dep source) in
-                if not skip then begin 
-                    order := dep :: !order; 
+                if not skip then (
+                    let n = match name with 
+                        | Some n -> n
+                        | None -> convert_var_name dep
+                    in
+                    order := (dep, n) :: !order; 
                     dups := Set.add !dups dep
-                end in
+                ) in
             let rec block b = List.iter Block.(b.stmts) ~f:(function
                 | Stmt.Expr e -> expr e 
                 | Stmt.Block bs -> block bs
@@ -384,8 +401,15 @@ module JsBackend = struct
             )
             and expr = function
                 | Value _ -> ()
-                (* | Ident _ -> () *)
-                | Ident id -> Common.log[(Option.value_exn id.resolved).source]; add_dep (Option.value_exn id.resolved).source 
+                | Li li -> List.iter li.items ~f:expr
+                | Foreign _ ->
+                    (* TODO: check it earlier? *)
+                    add_dep ~name: (Js.Convert.foreign_require) (Option.value_exn foreign_bindings)
+                | Ident id -> 
+                    (match id.resolved with 
+                    | None -> Common.log [id.given_name] 
+                    | Some _ -> ());
+                    add_dep (Option.value_exn id.resolved).source 
                 | Apply app -> 
                     expr app.fn;
                     List.iter app.args ~f:expr
@@ -407,17 +431,6 @@ module JsBackend = struct
             in modu root; !order
         in 
         let deps = collect_global_deps root in
-
-        let x = ref 0 in
-        let convert_var_name _ = 
-            let name = "__" ^ (Int.to_string !x) in
-            x := !x + 1;
-            name
-        in
-        let mapping = List.map deps ~f: (fun name ->
-            let var_name = convert_var_name name in
-            name, var_name
-        ) in
         let call name args = Js.Ast.Apply.{
             fn = Js.Ast.Expr.Ident (Js.Ast.Ident.{value=name});
             args = args;
@@ -428,17 +441,30 @@ module JsBackend = struct
             Js.Ast.Const.{name; expr = match expr with
             | `Block b -> Js.Ast.Const.Block b
             | `Expr e -> Js.Ast.Const.Expr e}
-        in let nodes = List.map mapping ~f: (fun (name, var_name) -> const var_name (`Expr (Js.Ast.Expr.Apply (require name)))) in
-        (nodes, mapping)
+        in let nodes = List.map deps ~f: (fun (name, var_name) -> const var_name (`Expr (Js.Ast.Expr.Apply (require name)))) in
+        (nodes, deps)
 
     let write_export backend export = 
         Map.iteri Typed.Symbol.Module.(export.bindings) ~f:(fun ~key ~data ->
             (* If module exposes foreign stuff, it should be correctly re-exposed*)
-            Js.Ast.Printer.str ("exports." ^ key ^ " = " ^ data.internal.name ^ "\n") backend.printer;
+            Js.Ast.Printer.str ("exports." ^ (Js.Convert.ident_value key) ^ " = " ^ Js.Convert.ident_value data.internal.name ^ "\n") backend.printer;
         )
 
-    let write_module backend source node export =
-        let (requires, mapping) = require_nodes ~source node in
+    let write_bindings backend source content = 
+        let open Js.Ast.Printer in
+        seq ~sep: "\n" [
+            str (module_header source);
+            str content;
+            str module_trailer
+        ] backend.printer
+
+    let write_module ~bindings backend source node export =
+        let foreign_bindings = (match bindings with
+        | Some (content, bindings_source) -> 
+            write_bindings backend bindings_source content;
+            Some bindings_source
+        | None -> None) in
+        let (requires, mapping) = require_nodes ~foreign_bindings ~source node in
         let ctx = Js.Convert.{
             source=source;
             required_sources = Map.of_alist_exn(module String) mapping;
@@ -467,7 +493,17 @@ end
 let make ~fs in_ out = 
     let backend = JsBackend.start ~config: JsBackend.{fs} (Frontend.source_path (Fs.(fs.cwd) ()) in_) in 
     match Frontend.run ~config: Frontend.{fs} ~callback: (fun {source; root; export} ->
-        JsBackend.write_module backend source root export
+        let foreign_source = (Caml.Filename.remove_extension source) ^ ".js" in
+        let bindings = match Caml.Sys.file_exists foreign_source with
+            | true -> (match File.read foreign_source with 
+                | Some contents -> Some (contents, foreign_source)
+                | None -> raise Unexpected
+            )
+            | false -> None
+        in
+        (* strip path / filename without ext *)
+        (* does $filename.js file exist. if so, read it and attach *)
+        JsBackend.write_module ~bindings backend source root export
     ) in_ with
     | Ok _ ->
         JsBackend.commit backend out;

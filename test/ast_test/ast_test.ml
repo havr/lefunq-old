@@ -133,8 +133,108 @@ let test parser to_pp ~input ~expect =
   let expect_ast = Pp.to_string [to_pp expect] in
   Alcotest.(check string) "ast match" expect_ast got_ast
 
+module Tuple = struct
+  open Ast.Node
+  let test_tuple = test (Ast.Parser.expr()) Expr.pretty_print
+
+  let tests = [
+    "test_empty", `Quick, (fun () -> test_tuple
+      ~input: "()"
+      ~expect: (Expr.Value (Value.Unit (Span.empty ())))
+    );
+
+    "test_empty_linebreak", `Quick, (fun () -> test_tuple
+      ~input: "(
+
+      )"
+      ~expect: (Expr.Value (Value.Unit (Span.empty ())))
+    );
+
+    "test_multiple", `Quick, (fun () -> test_tuple
+      ~input: "(1, 2)"
+      ~expect: (Expr.Value (Value.Tuple Tuple.{range = Span.empty_range; exprs = [
+        Expr.Value (Value.Int (Span.empty "1"));
+        Expr.Value (Value.Int (Span.empty "2"));
+      ]})));
+
+    "test_multiple_linebreak", `Quick, (fun () -> test_tuple
+      ~input: "(1,
+      2)"
+      ~expect: (Expr.Value (Value.Tuple Tuple.{range = Span.empty_range; exprs = [
+        Expr.Value (Value.Int (Span.empty "1"));
+        Expr.Value (Value.Int (Span.empty "2"));
+      ]})))
+  ]
+end
+
+module Li = struct
+  open Ast.Node
+  let test_li = test (Ast.Parser.list()) Li.pretty_print
+
+  let tests = [
+    "test_empty", `Quick, (fun () -> test_li
+      ~input: "[]"
+      ~expect: Li.{
+        range = Span.empty_range;
+        items = []
+      }
+    );
+
+    "test_empty_linebreak", `Quick, (fun() -> test_li
+      ~input: "[
+      ]"
+      ~expect: Li.{
+        range = Span.empty_range;
+        items = []
+      }
+    );
+
+    "test_values", `Quick, (fun () -> test_li
+      ~input: "[1; 2; 3]"
+      ~expect: Li.{
+        range = Span.empty_range;
+        items = [
+          Expr.Value (Value.Int (Span.empty "1"));
+          Expr.Value (Value.Int (Span.empty "2"));
+          Expr.Value (Value.Int (Span.empty "3"));
+        ]
+      }
+    );
+
+    "test_values_newline", `Quick, (fun () -> test_li
+        ~input: "[
+          1
+          2
+          3
+        ]"
+        ~expect: Li.{
+          range = Span.empty_range;
+          items = [
+            Expr.Value (Value.Int (Span.empty "1"));
+            Expr.Value (Value.Int (Span.empty "2"));
+            Expr.Value (Value.Int (Span.empty "3"));
+          ]
+        }
+    );   
+
+    "test_values_newline_semicolon", `Quick, (fun () -> test_li
+        ~input: "[
+          1;
+          2
+        ]"
+        ~expect: Li.{
+          range = Span.empty_range;
+          items = [
+            Expr.Value (Value.Int (Span.empty "1"));
+            Expr.Value (Value.Int (Span.empty "2"));
+          ]
+        }
+    )
+  ]
+end
+
 module Ident = struct 
-  let test_ident = test Ast.Parser.ident Ast.Node.Ident.pretty_print
+  let test_ident = test Ast.Parser.Lexemes.ident Ast.Node.Ident.pretty_print
 
   let test_simple () = test_ident
     ~input: "hello"
@@ -150,8 +250,8 @@ module Ident = struct
   ]
 
 end
-module Let = struct 
-  let test_let = test Ast.Parser.let_ Ast.Node.Let.tree_repr
+(* module Let = struct 
+  let test_let = test (Ast.Parser.let_()) Ast.Node.Let.tree_repr
 
   let test_simple () = test_import 
     ~input: {|import "hello"|}
@@ -173,9 +273,9 @@ module Let = struct
     "simple", `Quick, test_simple;
     "named", `Quick, test_named;
   ]
-end
+end *)
 
-module Import = struct 
+(* module Import = struct 
   let test_import = test Ast.Parser.import Ast.Node.Import.tree_repr
 
   let test_simple () = test_import 
@@ -198,7 +298,7 @@ module Import = struct
     "simple", `Quick, test_simple;
     "named", `Quick, test_named;
   ]
-end
+end *)
 (* module Import = struct 
   open Common
 
@@ -284,7 +384,8 @@ end
   ]
 end *)
 
-let () = Alcotest.run "Foo" [
-  "Ident", Ident.tests;
-  "Import", Import.tests
-]
+let tests = [
+    ("Ast:ident", Ident.tests);
+    ("Ast:tuple", Tuple.tests);
+    ("Ast:list", Li.tests)
+  ]

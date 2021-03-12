@@ -102,6 +102,14 @@ and Str: sig
 end = struct 
     type t = string Span.t
 end
+and Foreign: sig
+    type t = string Span.t
+    val pretty_print: t -> Common.Pp.branch
+end = struct 
+    type t = string Span.t
+    let pretty_print node = Pp.(branch [text "FOREIGN"; spanned node] [])
+
+end
 and Ident: sig
     type t = string Span.t
     val pretty_print: t -> Common.Pp.branch
@@ -185,6 +193,7 @@ and Cond: sig
     type t = {range: Span.range; if_: expr; then_: expr; else_: expr option}
 
     val expr_range: expr -> Span.range 
+    val pretty_print: t -> Pp.branch
 end = struct 
     type expr = 
         | Expr of Expr.t 
@@ -194,29 +203,65 @@ end = struct
     let expr_range = function
     | Expr e -> Expr.range e
     | Block b -> b.range
+
+    let pretty_print _ = Pp.(branch [text "Hello"] [])
 end
 and Apply: sig
     type t = { fn: Expr.t; args: Expr.t list; range: Span.range }
+
+    val pretty_print: t -> Pp.branch
 end = struct 
     type t = { fn: Expr.t; args: Expr.t list; range: Span.range }
+
+    let pretty_print _ = Pp.(branch [text "TODO: branch"] [])
+end
+and Li: sig 
+    type t = { range: Span.range; items: Expr.t list }
+
+    val pretty_print: t -> Pp.branch
+end = struct 
+    type t = { range: Span.range; items: Expr.t list }
+
+    let pretty_print node = 
+        let items = node.items in
+        Pp.(branch [text "LIST"] (List.map items ~f: Expr.pretty_print))
+end
+and Tuple: sig 
+    type t = { range: Span.range; exprs: Expr.t list }
+
+    val pretty_print: t -> Pp.branch
+end = struct 
+    type t = { range: Span.range; exprs: Expr.t list }
+
+    let pretty_print node = 
+        let exprs = node.exprs in
+        Pp.(branch [text "TUPLE"] (List.map exprs ~f: Expr.pretty_print))
 end
 and Value: sig
     type t = 
         | Int of Int.t 
         | Str of Str.t 
+        | Foreign of Foreign.t
         | Ident of Ident.t 
         | Lambda of Lambda.t 
+        | Tuple of Tuple.t
         | Unit of Unit.t
+        | Li of Li.t
 
     val range: t -> Span.range
-
+    val pretty_print: t -> Pp.branch
 end = struct 
     type t = 
         | Int of Int.t
         | Str of Str.t
+        | Foreign of Foreign.t
         | Ident of Ident.t
         | Lambda of Lambda.t
+        | Tuple of Tuple.t
         | Unit of Unit.t
+        | Li of Li.t
+
+    let pretty_print _ = Pp.(branch [text "TODO: value"] [])
 
     let range = function
     | Int i -> i.range
@@ -224,6 +269,9 @@ end = struct
     | Ident i -> i.range
     | Lambda l -> l.range
     | Unit u -> u.range
+    | Tuple t -> t.range
+    | Foreign f -> f.range
+    | Li l -> l.range
 end
 and Expr: sig
     type t = 
@@ -232,11 +280,17 @@ and Expr: sig
         | Cond of Cond.t
 
     val range: Expr.t -> Span.range
+    val pretty_print: t -> Pp.branch
 end = struct 
     type t =
         | Value of Value.t
         | Apply of Apply.t
         | Cond of Cond.t
+
+    let pretty_print = function
+        | Value v -> Value.pretty_print v
+        | Apply a -> Apply.pretty_print a
+        | Cond c -> Cond.pretty_print c
 
     let range = function
     | Value n -> Value.range n

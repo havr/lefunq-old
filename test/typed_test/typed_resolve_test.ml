@@ -5,45 +5,47 @@ open Typed
 let check_result args_expect args_got = 
     List.zip_exn args_expect args_got
     |> List.iter ~f: (fun (expect, got) ->
-        if not @@ Arg.equals expect got then
+        if not @@ Param.equals expect got then
             Alcotest.fail @@ String.concat ~sep: " " [
                 "arg mismatch:";
-                Arg.to_string expect;
+                Param.to_string expect;
                 "!=";
-                Arg.to_string got;
+                Param.to_string got;
             ]
     ) 
 
 let test ~given ~expect =
     (* TODO: make TypeNamer a function *)
-    let gen = make_tempvar_gen "t" in
-    let typed = Resolve.type_args gen given in
+    let gen = Util.make_tempvar_gen "t" in
+    let typed = Resolve.type_params gen given in
     check_result expect typed
+
+let ident_param ?typ name = Param.{shape = Param.Name Param.{resolved=name; given=name}; type'=Option.value ~default: Type.Unknown typ}
 
 let simple_name () =
     test 
     ~given: [
-        Arg.{shape = Arg.Name "x"; type'=Type.Unknown}
+        ident_param "x"
     ]
     ~expect: [
-        Arg.{shape=Arg.Name "x"; type'=Type.Var "t0"}
+        ident_param ~typ: (Type.Var "t0") "x"
     ]
 
 let simple_tuple () =
     test 
     ~given: [
-        Arg.{shape = Arg.Tuple [
-            Arg.{shape = Arg.Name "a"; type' = Type.Unknown};
-            Arg.{shape = Arg.Name "b"; type' = Type.Unknown};
-            Arg.{shape = Arg.Name "c"; type' = Type.Unknown};
+        Param.{shape = Param.Tuple [
+            ident_param "a";
+            ident_param "b";
+            ident_param "c";
         ]; type'=Type.Unknown}
     ]
     ~expect: [
-        Arg.{
-            shape=Arg.Tuple [
-                Arg.{shape = Arg.Name "a"; type' = Type.Var "t0"};
-                Arg.{shape = Arg.Name "b"; type' = Type.Var "t1"};
-                Arg.{shape = Arg.Name "c"; type' = Type.Var "t2"};
+        Param.{
+            shape=Param.Tuple [
+                ident_param ~typ: (Type.Var "t0") "a";
+                ident_param ~typ: (Type.Var "t1") "b";
+                ident_param ~typ: (Type.Var "t2") "c";
             ]; 
             type'=Type.Tuple [Type.Var "t0"; Type.Var "t1"; Type.Var "t2"]
         }

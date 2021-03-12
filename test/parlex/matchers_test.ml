@@ -7,7 +7,7 @@ end
 
 
 let check_outcome (ok, next_state) (got_ok, got_pos) = 
-  let open Parlex.Pos in
+  let open Common.Pos in
   let open Parlex.Lexer.State in
   Alcotest.(check bool) "result" ok got_ok;
   Alcotest.(check int) "position.idx" got_pos.idx next_state.pos.idx;
@@ -31,10 +31,10 @@ let check_add str parser expect =
 
     
 let test_char_ok () =
-  check "c" (Parlex.Lexer.Matcher.char "abc") (true, Parlex.Pos.{idx = 1; col = 2; row = 1})
+  check "c" (Parlex.Lexer.Matcher.char "abc") (true, Common.Pos.{idx = 1; col = 2; row = 1})
 
 let test_char_fail () =
-  check "c" (Parlex.Lexer.Matcher.char "def") (false, Parlex.Pos.{idx = 0; col = 1; row = 1})
+  check "c" (Parlex.Lexer.Matcher.char "def") (false, Common.Pos.{idx = 0; col = 1; row = 1})
 
 module Not = struct 
   open Parlex.Lexer.Matcher

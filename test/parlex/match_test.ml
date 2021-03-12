@@ -1,5 +1,5 @@
+open Common
 open Base
-open Parlex
 open Parlex.Lexer
 
 let lexeme = "hello"
@@ -14,7 +14,7 @@ let config = Match.{
     eof = eof
 }
 
-let str_lexemes xs = xs |> List.map ~f:(fun lexeme -> lexeme.value) |> String.concat ~sep:" "
+let str_lexemes xs = xs |> List.map ~f:(fun lexeme -> Span.(lexeme.value)) |> String.concat ~sep:" "
 
 let unexpected_lexemes xs = 
         Alcotest.fail ("Unexpected lexemes: " ^ (str_lexemes xs))

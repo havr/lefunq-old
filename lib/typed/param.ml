@@ -1,9 +1,13 @@
 open Base
+open Common
+
+(* TODO: use it for all idents? *)
+type name = {given: string; resolved: string}
 
 type shape = 
 | Unit
 | Tuple of t list 
-| Name of string
+| Name of name
 and t = { shape: shape; type': Type.t}
 
 type params = t list
@@ -20,7 +24,7 @@ let rec to_string a =
     in
     let shape_str = match (a.shape) with
     | Unit -> "Unit"
-    | Name n -> n
+    | Name n -> "%s:%s" %% [n.resolved; n.given]
     | Tuple t -> 
         let ts = List.map t ~f:to_string |> String.concat ~sep:" " in
         "(" ^ ts ^ ")"

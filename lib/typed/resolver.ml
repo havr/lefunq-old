@@ -10,7 +10,7 @@ module Scope = struct
             in
             let name' = match curr_idx with
             | 0 -> name
-            | n -> prefix ^ name ^ "$" ^ (Int.to_string n)
+            | n -> prefix ^ name ^ "__" ^ (Int.to_string n)
             in
             sh := Map.set !(sh) ~key: name ~data: curr_idx;
             name'
@@ -74,6 +74,8 @@ module Scope = struct
 
     let make_id scope name =
         let scope_name = scope.namer name in
+        (if String.equal name "fact" then Common.log[Common.stacktrace ()]);
+        Common.log["make id"; name; scope_name];
         Symbol.Id.{
             source = scope.source;
             name = if phys_equal scope.path "" then scope_name 
@@ -104,6 +106,16 @@ module Scope = struct
         namer = namer ""
     }
  
+
+    let set_binding_scheme scope given_name scheme =
+        scope.names <- Map.change scope.names given_name ~f:(function
+            | None -> raise (Invalid_argument ("%s not found " %% [given_name]))
+            | Some r -> (match r.binding with
+                | None -> raise (Invalid_argument ("binding %s not found" %% [given_name]))
+                | Some b -> Some {r with binding = Some {b with scheme}}
+            )
+        )
+
     let add_binding scope exposed scheme =
         let id = make_id scope exposed in
         (* TODO: what when I re-expose stuff? *)

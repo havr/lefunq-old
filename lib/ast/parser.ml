@@ -36,14 +36,18 @@ module Lexemes = struct
     let eq = match_map(function Eq -> Some () | _ -> None)
     let open_block = match_map(function | OpenBlock -> Some() | _ -> None)
     let close_block = match_map(function | CloseBlock -> Some() | _ -> None)
+    let semi = match_map(function | Semi -> Some() | _ -> None)
     let stmt_separator = match_map(function | LineBreak -> Some() | Semi -> Some() | _ -> None)
     let lambda = match_map(function | Lambda -> Some () | _ -> None)
+    let open_bracket = match_map(function | OpenBracket -> Some() | _ -> None) 
+    let close_bracket = match_map(function | CloseBracket -> Some() | _ -> None)
     let open_paren = match_map(function | OpenParen -> Some() | _ -> None) 
     let close_paren = match_map(function | CloseParen -> Some() | _ -> None)
     let line_break = match_map(function | LineBreak -> Some() | _ -> None)
     let coma = match_map(function | Coma -> Some () | _ -> None)
     let sig' = match_map(function | Sig -> Some () | _ -> None)
     let func_arrow = match_map(function | FuncArrow -> Some () | _ -> None)
+    let foreign = match_map(function | Foreign -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -52,7 +56,7 @@ let precedence = [ ["|>"]; ["$"]; ["+"; "-"]; ["*"; "/"; "%"]; [">"; "<"; "=="; 
 
 let wrap p = {fn = p.fn}
 
-let newlines = one_more @@ Lexemes.line_break
+let newlines = let+ _ = one_more @@ Lexemes.line_break in ()
 
 let ignore_newline p = 
     let+ _ = many @@ Lexemes.line_break 
@@ -97,6 +101,17 @@ let choice parsers = { fn = fun state ->
     | Some(v) -> v
     | None -> (no_match "unable to match").fn state
 }
+
+(* TODO: single separated_by function *)
+let separated_by_with_traliing sep p = 
+    let separated_elem =
+        let+ _ = sep 
+        and+ elem = p 
+        in elem
+    in
+    let+ first = p 
+    and+ rest = many separated_elem in
+        (first :: rest)
 
 let separated_by sep p = 
     let separated_elem =
@@ -250,18 +265,24 @@ let operator_ident =
     and+ _ = Lexemes.close_paren
     in op
 
+let foreign = 
+    let+ _ = Lexemes.foreign 
+    and+ name = Lexemes.str 
+    in (Node.Value.Foreign name) 
 let rec value () = choice [
     map Lexemes.int (fun i -> Node.Value.Int i);
     map Lexemes.str (fun s -> Node.Value.Str s);
     map Lexemes.ident (fun id -> Node.Value.Ident id);
     map (lambda()) (fun v -> Node.Value.Lambda v);
+    map (list()) (fun v -> Node.Value.Li v);
+    foreign
 ] 
 (* TODO: check if it's possible to swith monads to applicatives whenever it's possible *)
 and cond () =
     let block_or_expr () = choice [
         (* TODO: rename to expr *)
         map (block ()) (fun n -> Node.Cond.Block n);
-        map (binary ()) (fun n -> Node.Cond.Expr n);
+        map (expr ()) (fun n -> Node.Cond.Expr n);
     ] in
     let* _ = Lexemes.if' in
     let* if_expr = expect 
@@ -300,10 +321,26 @@ and cond () =
                 then_=then_expr;
             else_=Some else_expr
                 }
+and fn_arg () =
+    (* Common.log [Common.stacktrace ()]; *)
+    let parens () = 
+        let+ open_paren = Lexemes.open_paren 
+        and+ expr = maybe @@ (tuple_expr ())
+        and+ close_paren = expect @@ Lexemes.close_paren in
+        match expr with
+        | None -> Node.Expr.Value (Node.Value.Unit (Span.merged open_paren.range close_paren.range ()))
+        | Some v -> v
+    in 
+    (* elem *)
+
+    choicef [
+        (fun () -> parens ());
+        (fun () -> map (value ()) (fun v -> Node.Expr.Value v))
+    ]
 and fn () = 
-    let+ cell = parens ()
+    let+ cell = fn_arg() 
     (* TODO: parens and expressions here!!! *)
-    and+ args = many (parens()) in
+    and+ args = many (fn_arg ()) in
         match args with
         | [] -> cell 
         | some -> Node.Expr.Apply Node.Apply.{
@@ -311,12 +348,43 @@ and fn () =
             args = some;
             range = Span.merge (Node.Expr.range cell) (Node.Expr.range (List.last_exn some))
         }
-and parens () = choicef [
+and list () = 
+    let semi = 
+        let+ _ = maybe newlines 
+        and+ _ = Lexemes.semi
+        and+ _ = maybe newlines in ()
+    in
+    let+ open_bracket = Lexemes.open_bracket 
+    and+ exprs = ignore_newline @@ maybe @@ separated_by_with_traliing (
+        choice [ 
+            semi; newlines
+        ]
+    ) (expr())
+    and+ close_bracket = expect @@ ignore_newline @@ Lexemes.close_bracket in
+    Node.Li.{
+        range = Span.merge open_bracket.range close_bracket.range;
+        items = exprs |> Option.value ~default: []
+    }
+(* and expr () = 
+    (* let elem = choicef [
     (* use here the .fn = fn trick *)
-    (fun () -> map (value ()) (fun n -> Node.Expr.Value n));
-    (fun () -> map (tuple ()) (fun n -> n));
-    (fun () -> map (cond ()) (fun n -> Node.Expr.Cond n));
-]
+        (fun () -> map (value ()) (fun n -> Node.Expr.Value n));
+        (fun () -> map (tuple' ()) (fun n -> n));
+        (fun () -> map (cond ()) (fun n -> Node.Expr.Cond n));
+    ] in  *)
+    let parens = 
+        let+ open_paren = Lexemes.open_paren 
+        and+ expr = maybe @@ (binary ())
+        and+ close_paren = expect @@ Lexemes.close_paren in
+        match expr with
+        | None -> Node.Expr.Value (Node.Value.Unit (Span.merged open_paren.range close_paren.range ()))
+        | Some v -> v
+    in 
+    (* elem *)
+
+    choice [
+        (binary()); parens
+    ] *)
 and unary () =
     let rec make expr = function
     | [] -> expr
@@ -357,38 +425,56 @@ and binary' = function
     let* result = loop left in 
         return result
 and binary () = binary' precedence
-and tuple () =
+and tuple_expr () =
+    let elem = choicef [
+        (fun () -> map (binary' precedence) (fun v -> v));
+        (fun () -> map (cond()) (fun v -> Node.Expr.Cond v));
+    ] in
+    let+ first = separated_by (ignore_newline @@ Lexemes.coma) (ignore_newline @@ elem) in
+    match first with
+    | [] -> (raise (Common.Unreachable))
+    | only :: [] -> only
+    | first :: last -> Node.Expr.Value (Node.Value.Tuple {
+        exprs = first :: last;
+        range = Span.merge (Node.Expr.range first) (Node.Expr.range (List.last_exn last))
+    })
+and expr () = 
+    let parens = 
+        let+ open_paren = Lexemes.open_paren 
+        and+ expr = maybe @@ (tuple_expr ())
+        and+ close_paren = expect @@ ignore_newline @@ Lexemes.close_paren in
+        match expr with
+        | None -> Node.Expr.Value (Node.Value.Unit (Span.merged open_paren.range close_paren.range ()))
+        | Some v -> v
+    in 
+    choice [ 
+        parens; (tuple_expr());
+    ]
+(* and tuple () =
     let+ op = Lexemes.open_paren 
     (* TODO: separated_by (,) *)
-    and+ expr = maybe @@ binary () 
+    and+ expr = maybe @@ expr () 
     and+ close = expect ~ctx: "tuple" 
         @@ ignore_newline 
         @@ Lexemes.close_paren in 
     match expr with
     | None -> Node.Expr.Value (Node.Value.Unit (
         Span.from (Span.merge op.range close.range) ()))
-    | Some e -> e
+    | Some e -> e *)
+and sig_ () =
+    let+ _ = Lexemes.sig'
+    and+ typ = expect @@ type' () 
+    and+ let' = expect @@ ignore_newline @@ let_ () in
+    Node.Let.{let' with sig' = Some typ}
 and let_ () = 
     let let_rhs = choicef [
         (fun () -> map (block()) (fun v -> Node.Let.Block v));
-        (fun () -> map (binary()) (fun v -> Node.Let.Expr v));
+        (fun () -> map (expr()) (fun v -> Node.Let.Expr v));
     ] in
     let let_ident = choice [
         Lexemes.ident; operator_ident
     ] in
-    let sig' = 
-        let+ _ = Lexemes.sig'
-        and+ typ = expect @@ type' () 
-        and+ keyword = expect @@ ignore_newline @@ Lexemes.let' in
-        (Some typ), keyword
-    in
-    let nosig = 
-        let+ keyword = Lexemes.let' in
-        None, keyword
-    in
-    let+ sig', keyword = choice [
-        sig'; nosig
-    ]
+    let+ keyword = Lexemes.let'
     and+ rec_ = maybe @@ Lexemes.rec_
     and+ ident = expect 
         ~ctx:"let" 
@@ -399,13 +485,13 @@ and let_ () =
         ~ctx:"let" 
         ~exp:"=" 
         @@ ignore_newline @@ Lexemes.eq
-    and+ ex = expect ~ctx: "dbg" 
+    and+ ex = expect ~ctx: "le rhs" 
         @@ ignore_newline @@ let_rhs in
     let arg_list = match args with 
         | [] -> None 
         | args -> Some Node.Arg.{args=args} 
     in Node.Let.{
-        sig' = sig';
+        sig' = None;
         range = Span.merge keyword.range (Node.Let.expr_range ex);
         is_rec = Option.is_some rec_;
         args = arg_list;
@@ -425,9 +511,10 @@ and block () =
 
 and block_stmts () = 
     let block_stmt () = choicef [
+        (fun () -> map (sig_()) (fun v -> Node.Block.Let v));
         (fun () -> map (let_()) (fun v -> Node.Block.Let v));
         (fun () -> map (block ()) (fun v -> Node.Block.Block v));
-        (fun () -> map (binary()) (fun v -> Node.Block.Expr v));
+        (fun () -> map (expr ()) (fun v -> Node.Block.Expr v));
     ] in let separated_block_stmt = 
         let+ stmt = ignore_newline @@ (block_stmt ())
         and+ _ = maybe @@ Lexemes.stmt_separator in stmt
@@ -445,6 +532,7 @@ and lambda () =
 
 and module_entries () = 
     let root_stmt () = choicef [
+        (fun () -> map (sig_()) (fun v -> Node.Module.Let v));
         (fun () -> map (let_()) (fun v -> Node.Module.Let v));
         (fun () -> map (import) (fun v -> Node.Module.Import v));
     ] in let separated_block_stmt = 

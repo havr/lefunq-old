@@ -7,6 +7,8 @@ type t = Int of string
     | Semi
     | OpenBlock
     | CloseBlock
+    | OpenBracket
+    | CloseBracket
     | OpenParen
     | CloseParen
     | LineBreak
@@ -20,6 +22,7 @@ type t = Int of string
     | Import
     | Sig
     | FuncArrow
+    | Foreign
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -34,6 +37,8 @@ let to_string lexeme = match lexeme with
     | CloseBlock -> "}"
     | LineBreak -> "\\n"
     | Eof -> "eof"
+    | OpenBracket -> "["
+    | CloseBracket -> "]"
     | OpenParen -> "("
     | CloseParen -> ")"
     | Coma -> ","
@@ -45,6 +50,7 @@ let to_string lexeme = match lexeme with
     | Import -> "import"
     | Sig -> "sig"
     | FuncArrow -> "->"
+    | Foreign -> "foreign"
     | Error e -> "error: " ^ e
 
 let eof = Eof

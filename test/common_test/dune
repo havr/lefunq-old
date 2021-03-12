@@ -1,6 +1,6 @@
 (library
- (name parlex_test)
+ (name common_test)
  (libraries
   alcotest
-  parlex
+  common
 ))

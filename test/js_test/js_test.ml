@@ -51,14 +51,13 @@ module EndToEnd = struct
             end; ()
 
 
-    let define name tests = [
-        let alcodefs = tests |> List.map ~f:(fun test -> 
-            (test.name, `Quick, alcotest test)
-        ) in Alcotest.run name ["Root", alcodefs]
-    ]
+    let define name tests = 
+        let defs = tests |> List.map ~f:(fun test -> 
+            (name ^ ":" ^ test.name, `Quick, alcotest test)
+        ) in (name, defs)
 end
 
-let sigs = ignore @@ EndToEnd.define "sigs" [
+let sigs = EndToEnd.define "sigs" [
     {
         name = "working";
         expect = "hello";
@@ -76,7 +75,7 @@ let sigs = ignore @@ EndToEnd.define "sigs" [
   "Applicative", Applicative_test.tests;
   "Matchers", Matchers_test.tests;
 ] *)
-let () = ignore @@ EndToEnd.define "lambdas" [
+let lambdas = EndToEnd.define "lambdas" [
     {
         name = "multiple";
         expect = "a\nb\nc";
@@ -195,8 +194,23 @@ let () = ignore @@ EndToEnd.define "lambdas" [
             let main = {let a = myfn 40 2; println a}
         |}
     };
-    (* language fetaures *)
+    (* TODO: move elsewhere into lists *)
     {
+        name = "simple lists";
+        expect = "[ 1, 2, 3 ]";
+        code = {|
+            let main = println [1; 2; 3]
+        |}
+    };
+    {
+        name = "simple tuples";
+        expect = "[ 1, 2, 3 ]";
+        code = {|
+            let main = println (1, 2, 3)
+        |}
+    };
+    (* language fetaures *)
+    (* {
         name = "type";
         expect = "42";
         code = {|
@@ -204,5 +218,7 @@ let () = ignore @@ EndToEnd.define "lambdas" [
             let b: Int = 2
             let main = println (a + b)
         |}
-    };
+    }; *)
 ]
+
+let tests = [sigs; lambdas] 

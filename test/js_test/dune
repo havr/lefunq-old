@@ -1,4 +1,4 @@
-(executable
+(library
  (name js_test)
  (libraries
   alcotest

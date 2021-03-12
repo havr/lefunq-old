@@ -103,6 +103,7 @@ and Expr: sig
         | Lambda of Lambda.t 
         | Block of Block.t 
         | Parens of Expr.t
+        | Li of (Expr.t list)
         | Void
 end = struct
     type t = 
@@ -115,6 +116,7 @@ end = struct
         | Lambda of Lambda.t 
         | Block of Block.t 
         | Parens of Expr.t
+        | Li of (Expr.t list)
         | Void
 end
 
@@ -196,6 +198,10 @@ module Prn = struct
         | Expr.Str n -> string n
         | Expr.Binary n -> binary n
         | Expr.Block n -> block n
+        | Expr.Li li ->
+            let open Base in
+            let items = List.map ~f:expr li in
+            seq[str "["; seq ~sep: "," items; str "]"]
         | Expr.Parens p -> seq[str "("; expr p; str ")"]
         | Expr.Unary n -> 
             separated Unary.[

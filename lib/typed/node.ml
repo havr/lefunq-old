@@ -58,6 +58,19 @@ end = struct
         values_equal && types_equal
 
 end
+and Foreign: sig 
+    type t = {
+        range: Span.range;
+        name: string;
+        scheme: Type.scheme option;
+    }
+end = struct 
+    type t = {
+        range: Span.range;
+        name: string;
+        scheme: Type.scheme option;
+    }
+end
 and Ident: sig 
     type t = {
         range: Span.range;
@@ -110,7 +123,10 @@ and Let: sig
         scope_name: string;
         scheme: Type.scheme option;
         is_rec: bool;
-        block: Block.t 
+        block: Block.t;
+        params: Param.t list;
+        result: Type.t;
+        sigt: Type.t option;
     }
 end = struct 
     type t = {
@@ -119,7 +135,10 @@ end = struct
         scope_name: string;
         scheme: Type.scheme option;
         is_rec: bool;
-        block: Block.t 
+        block: Block.t;
+        params: Param.t list;
+        result: Type.t;
+        sigt: Type.t option;
     }
 end
 
@@ -178,6 +197,17 @@ end = struct
         exprs: Expr.t list
     }
 end
+and Li: sig
+    type t = {
+        range: Span.range;
+        items: Expr.t list
+    }
+end = struct 
+    type t = {
+        range: Span.range;
+        items: Expr.t list
+    }
+end
 and Lambda: sig 
     type t = {
         range: Span.range;
@@ -198,7 +228,9 @@ and Expr: sig
         | Apply of Apply.t
         | Lambda of Lambda.t
         | Cond of Cond.t
+        | Li of Li.t
         | Tuple of Tuple.t
+        | Foreign of Foreign.t
 
     val to_string: t -> string
     val range: t -> Span.range
@@ -209,7 +241,9 @@ end = struct
         | Apply of Apply.t
         | Lambda of Lambda.t
         | Cond of Cond.t
+        | Li of Li.t
         | Tuple of Tuple.t
+        | Foreign of Foreign.t
 
     let range = function
     | Value v -> v.range
@@ -218,6 +252,8 @@ end = struct
     | Lambda lam -> lam.range
     | Cond cond -> cond.range
     | Tuple tup -> tup.range
+    | Foreign f -> f.range
+    | Li l -> l.range
 
     let to_string = function
     | Value v -> Value.to_string v
@@ -226,6 +262,8 @@ end = struct
     | Lambda _ -> raise Common.TODO
     | Cond _ -> raise Common.TODO
     | Tuple _ -> raise Common.TODO
+    | Foreign _ -> raise Common.TODO
+    | Li _ -> raise Common.TODO
 end
 
 module Import = struct 

@@ -1,23 +1,18 @@
 module Fake = struct 
   let local_ident name type_ = 
     Typed.Ident.{
-      pos = Common.Pos.empty;
+      range = Common.Span.empty_range;
       given_name = name;
       scheme = Some (Typed.Type.make_scheme [] type_); (* TODO: is it really needed here *)
-      resolved = Typed.Ident.Local {
-        scope_name = name;
-        param = false;
-      }
+      resolved = Some (Typed.Symbol.Id.make "" name);
     }
 
   let global_ident name type_ = 
     Typed.Ident.{
-      pos = Common.Pos.empty;
+      range = Common.Span.empty_range;
       given_name = name;
       scheme = Some (Typed.Type.make_scheme [] type_); (* TODO: is it really needed here *)
-      resolved = Typed.Ident.Global {
-        global_name = Typed.Resolver.{full_name = name; file=""}
-      }
+      resolved = Some (Typed.Symbol.Id.make "" name);
     }
 end
 
@@ -156,36 +151,38 @@ module Unify = struct
   *)
 end
 
+let simple name = Typed.Type.Simple (name, [])
 module Infer = struct 
   let local_ident_expr name = Typed.Expr.Ident (Typed.Ident.{
-    pos = Common.Pos.empty;
+    range = Common.Span.empty_range;
     given_name = name;
-    resolved = Typed.Ident.Local {scope_name = name; param = false};
+    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = None;
   })
 
   let typed_local_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
-    pos = Common.Pos.empty;
+    range = Common.Span.empty_range;
     given_name = name;
-    resolved = Typed.Ident.Local {scope_name = name; param = false};
+    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
   let global_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
-    pos = Common.Pos.empty;
+    range = Common.Span.empty_range;
     given_name = name;
-    resolved = Typed.Ident.Global {global_name = Typed.Resolver.{full_name = name; file = ""}};
+    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
   let global_scheme_expr name typ = Typed.Expr.Ident (Typed.Ident.{
-    pos = Common.Pos.empty;
+    range = Common.Span.empty_range;
     given_name = name;
-    resolved = Typed.Ident.Global {global_name = Typed.Resolver.{full_name = name; file = ""}};
+    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = Some typ;
   })
 
   let tuple_expr exprs = Typed.Expr.Tuple (Typed.Tuple.{
+    range = Common.Span.empty_range;
     exprs = exprs
   })
 
@@ -204,9 +201,9 @@ module Infer = struct
     end;
     begin 
         let errors_expected_not_found = difference 
-          ~equals: (Typed.Erro.equals) errors (Typed.Basket.get Typed.Infer.(ctx.errors)) in
+          ~equals: (Typed.Erro.equals) errors Typed.Infer.(ctx.errors) in
         let unexpected_got = difference 
-          ~equals: (Typed.Erro.equals) (Typed.Basket.get ctx.errors) errors in
+          ~equals: (Typed.Erro.equals) ctx.errors errors in
         let map_errors errors = errors |> List.map ~f:Typed.Erro.to_string in
         let exp_not_found = if List.length errors_expected_not_found > 0 then
           map_errors errors_expected_not_found 
@@ -230,22 +227,24 @@ module Infer = struct
 
   let test ?(errors=[]) ~node ~expect_type ~expect = 
     let ctx = Typed.Infer.{
-      errors = Typed.Basket.make ();
       tempvar = Typed.Util.make_tempvar_gen "t";
-      store = Typed.TypeStore.make ();
+      errors = [];
+      substs = Map.empty(module String);
+      env = Map.empty(module String);
     } in
-    let (subst, typ) = Typed.Infer.expr ~ctx (Map.empty (module String)) (Typed.Subst.empty_subst) node in
-    check_results ~ctx ~errors ~expect_type ~expect subst typ
+    let typ = Typed.Infer.expr ~ctx node in
+    check_results ~ctx ~errors ~expect_type ~expect ctx.substs typ
 
 
   let test_apply () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
-        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Base_types.int; Typed.Type.Simple "Str"];
+        range = Common.Span.empty_range;
+        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Base_types.int; simple "Str"];
         args = [
           typed_local_ident_expr "hello" @@ Typed.Type.Var "t0"
         ]
       })
-      ~expect_type: (Typed.Type.Simple "Str")
+      ~expect_type: (simple "Str")
       ~expect: [
         "t0", Typed.Base_types.int
       ]
@@ -253,15 +252,17 @@ module Infer = struct
 
   let test_simple_apply_mismatch () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
-        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Base_types.int; Typed.Type.Simple "Str"];
+        range = Common.Span.empty_range;
+        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Base_types.int; simple "Str"];
         args = [
-          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Float"
+          typed_local_ident_expr "hello" @@ simple "Float"
         ]
       })
-      ~expect_type: (Typed.Type.Simple "Str")
+      ~expect_type: (simple "Str")
       ~errors: [
         Typed.Erro.TypeMismatch {
-          type_provided = Typed.Type.Simple "Float";
+          range = Common.Span.empty_range;
+          type_provided = simple "Float";
           type_expected = Typed.Base_types.int;
         }
       ]
@@ -269,28 +270,31 @@ module Infer = struct
 
   let test_inferred_apply_mismatch () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
-        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Base_types.int; Typed.Type.Simple "Float"; Typed.Type.Simple "Str"];
+        range = Common.Span.empty_range;
+        fn = global_scheme_expr "test" @@ Typed.Type.lambda [Typed.Base_types.int; simple "Float"; simple "Str"];
         args = [
           typed_local_ident_expr "hello" @@ Typed.Type.Var "t0";
           typed_local_ident_expr "hello" @@ Typed.Type.Var "t0"
         ]
       })
-      ~expect_type: (Typed.Type.Simple "Str")
+      ~expect_type: (simple "Str")
       ~errors: [
         Typed.Erro.TypeMismatch {
+          range = Common.Span.empty_range;
           type_provided = Typed.Base_types.int;
-          type_expected = Typed.Type.Simple "Float";
+          type_expected = simple "Float";
         }
       ]
       ~expect: []
 
   let test_inferred_nested_apply_mismatch () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_scheme_expr "test" @@ Typed.Type.lambda [
-          Typed.Type.Simple "Str"; 
+          simple "Str"; 
           Typed.Type.Tuple [
             Typed.Base_types.int;
-            Typed.Type.Simple "Float";
+            simple "Float";
           ];
           Typed.Base_types.int
         ];
@@ -305,21 +309,23 @@ module Infer = struct
       ~expect_type: (Typed.Base_types.int)
       ~errors: [
         Typed.Erro.TypeMismatch {
-          type_provided = Typed.Type.Simple "Str";
-          type_expected = Typed.Type.Simple "Float";
+          range = Common.Span.empty_range;
+          type_provided = simple "Str";
+          type_expected = simple "Float";
         }
       ]
       ~expect: []
 
   let test_inferred_dobule_nested_apply_mismatch () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_scheme_expr "test" @@ Typed.Type.lambda [
-          Typed.Type.Simple "Str"; 
+          simple "Str"; 
           Typed.Type.Tuple [
             Typed.Base_types.int;
             Typed.Type.Tuple [
               Typed.Base_types.int;
-              Typed.Type.Simple "Float";
+              simple "Float";
             ]
           ];
           Typed.Base_types.int
@@ -338,61 +344,66 @@ module Infer = struct
       ~expect_type: (Typed.Base_types.int)
       ~errors: [
         Typed.Erro.TypeMismatch {
-          type_provided = Typed.Type.Simple "Str";
-          type_expected = Typed.Type.Simple "Float";
+          range = Common.Span.empty_range;
+          type_provided = simple "Str";
+          type_expected = simple "Float";
         }
       ]
       ~expect: []
 
   let test_not_a_function () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_scheme_expr "test" @@ Typed.Type.lambda [
-          Typed.Type.Simple "Str"; 
-          Typed.Type.Simple "Str"; 
+          simple "Str"; 
+          simple "Str"; 
         ];
         args = [
-          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Str";
-          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "hello" @@ simple "Str";
+          typed_local_ident_expr "hello" @@ simple "Str";
           typed_local_ident_expr "hello" @@ Typed.Base_types.int;
         ]
       })
-      ~expect_type: (Typed.Type.Simple "Str")
+      ~expect_type: (simple "Str")
       ~errors: [
         Typed.Erro.NotFunction {
-          type_provided = Typed.Type.Simple "Str";
+          range = Common.Span.empty_range;
+          type_provided = simple "Str";
         }
       ]
       ~expect: []
 
   let test_simple_generic () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_scheme_expr "test" @@ Typed.Type.lambda ~constr:["t"] [
           Typed.Type.Var "t"; 
           Typed.Type.Var "t"; 
         ];
         args = [
-          typed_local_ident_expr "hello" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "hello" @@ simple "Str";
         ]
       })
-      ~expect_type: (Typed.Type.Simple "Str")
+      ~expect_type: (simple "Str")
       ~errors: []
       ~expect: []
 
   let test_simple_generic_multiparam () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_scheme_expr "test" @@ Typed.Type.lambda ~constr:["t"; "u"] [
           Typed.Type.Var "t"; 
           Typed.Type.Var "u"; 
           Typed.Type.Tuple [Typed.Type.Var "t"; Typed.Type.Var "u"]; 
         ];
         args = [
-          typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "str" @@ simple "Str";
           typed_local_ident_expr "int" @@ Typed.Base_types.int;
         ]
       })
       ~expect_type: (
           Typed.Type.Tuple [
-            Typed.Type.Simple "Str";
+            simple "Str";
             Typed.Base_types.int
           ] 
         )
@@ -401,30 +412,33 @@ module Infer = struct
 
   let test_simple_generic_mismatch () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_scheme_expr "test" @@ Typed.Type.lambda ~constr:["t"] [
           Typed.Type.Var "t"; 
           Typed.Type.Var "t"; 
           Typed.Type.Var "t"; 
         ];
         args = [
-          typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "str" @@ simple "Str";
           typed_local_ident_expr "int" @@ Typed.Base_types.int;
         ]
       })
-      ~expect_type: (Typed.Type.Simple "Str")
+      ~expect_type: (simple "Str")
       ~errors: [
         Typed.Erro.TypeMismatch {
+          range = Common.Span.empty_range;
           type_provided = Typed.Base_types.int;
-          type_expected = Typed.Type.Simple "Str";
+          type_expected = simple "Str";
         }
       ]
       ~expect: []
 
   let test_lambda_infer () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_ident_expr "test" @@ Typed.Type.Var "a0";
         args = [
-          typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+          typed_local_ident_expr "str" @@ simple "Str";
           typed_local_ident_expr "int" @@ Typed.Base_types.int;
         ]
       })
@@ -436,7 +450,7 @@ module Infer = struct
       ~errors: []
       ~expect: [
         "a0", (Typed.Type.lambda [
-          Typed.Type.Simple "Str";
+          simple "Str";
           Typed.Base_types.int;
           Typed.Type.Var "t0"
         ]).typ
@@ -445,12 +459,14 @@ module Infer = struct
 
   let test_func_one_arg () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_ident_expr "int_to_int" @@ (Typed.Type.lambda [
           Typed.Base_types.int;
           Typed.Base_types.int;
         ]).typ;
         args = [
           Typed.Expr.Apply (Typed.Apply.{
+            range = Common.Span.empty_range;
             fn = global_ident_expr "fn" @@ Typed.Type.Var "a0";
             args = [
               typed_local_ident_expr "int" @@ Typed.Base_types.int;
@@ -471,6 +487,7 @@ module Infer = struct
 
   let test_func_arg_mismatch () = test 
       ~node: (Typed.Expr.Apply Typed.Apply.{
+        range = Common.Span.empty_range;
         fn = global_ident_expr "+" @@ (Typed.Type.lambda [
           Typed.Base_types.int;
           Typed.Base_types.int;
@@ -478,15 +495,17 @@ module Infer = struct
         ]).typ;
         args = [
           Typed.Expr.Apply (Typed.Apply.{
+            range = Common.Span.empty_range;
             fn = global_ident_expr "fn" @@ Typed.Type.Var "a0";
             args = [
               typed_local_ident_expr "int" @@ Typed.Base_types.int;
             ];
           });
           Typed.Expr.Apply (Typed.Apply.{
+            range = Common.Span.empty_range;
             fn = global_ident_expr "fn" @@ Typed.Type.Var "a0";
             args = [
-              typed_local_ident_expr "str" @@ Typed.Type.Simple "Str";
+              typed_local_ident_expr "str" @@ simple "Str";
             ];
           })
         ]
@@ -496,7 +515,8 @@ module Infer = struct
       )
       ~errors: [
         Typed.Erro.TypeMismatch {
-          type_provided = Typed.Type.Simple "Str";
+          range = Common.Span.empty_range;
+          type_provided = simple "Str";
           type_expected = Typed.Base_types.int;
         }
       ]
@@ -526,13 +546,14 @@ module Infer = struct
     (* TODO: open Typed *)
     (* TODO: use test block *)
     let test ?(errors=[]) ~stmts ~expect_type ~expect = 
-      let ctx = Typed.Infer.{
-        errors = Typed.Basket.make ();
-        tempvar = Typed.Util.make_tempvar_gen "t";
-        store = Typed.TypeStore.make ();
-      } in
-      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Subst.empty_subst) (Typed.Block.{stmts = stmts}) in
-      check_results ~ctx ~errors ~expect_type ~expect subst typ
+    let ctx = Typed.Infer.{
+      tempvar = Typed.Util.make_tempvar_gen "t";
+      errors = [];
+      substs = Map.empty(module String);
+      env = Map.empty(module String);
+    } in 
+      let typ = Typed.Infer.block ~ctx (Typed.Block.{stmts = stmts; range = Common.Span.empty_range}) in
+      check_results ~ctx ~errors ~expect_type ~expect ctx.substs typ
 
     open Helper
 
@@ -544,7 +565,7 @@ module Infer = struct
         local_ident_stmt "hello" 
       ]
       ~expect_type: (
-        Typed.Type.Simple Base_types.int_name;
+        simple Base_types.int_name;
       )
       ~errors: []
       ~expect: []
@@ -553,7 +574,7 @@ module Infer = struct
     let let_lambda () = test
       ~stmts: [
         let_stmt "hello" [
-          lambda_stmt ["a", Type.Var "t"] [
+          lambda_stmt [Param.{given = "a"; resolved= ""}, Type.Var "t"] [
             local_ident_stmt ~scheme:(Type.make_scheme [] (Type.Var "t")) "a"
           ]
         ];
@@ -574,17 +595,18 @@ module Infer = struct
   module Block = struct 
     let test ?(errors=[]) ~stmts ~expect_type ~expect = 
       let ctx = Typed.Infer.{
-        errors = Typed.Basket.make ();
         tempvar = Typed.Util.make_tempvar_gen "t";
-        store = Typed.TypeStore.make ();
+        errors = [];
+        substs = Map.empty(module String);
+        env = Map.empty(module String);
       } in
-      let (subst, typ) = Typed.Infer.block ~ctx (Map.empty (module String)) (Typed.Subst.empty_subst) (Typed.Block.{stmts = stmts}) in
-      check_results ~ctx ~errors ~expect_type ~expect subst typ
+      let typ = Typed.Infer.block ~ctx (Typed.Block.{stmts = stmts; range = Common.Span.empty_range}) in
+      check_results ~ctx ~errors ~expect_type ~expect ctx.substs typ
       
     let test_returns_last_statement () = test
       ~stmts: [
-        Typed.Stmt.Expr (Typed.Expr.Tuple (Typed.Tuple.{exprs=[]}));
-        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.Base_types.int}))
+        Typed.Stmt.Expr (Typed.Expr.Tuple (Typed.Tuple.{exprs=[]; range = Common.Span.empty_range}));
+        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.Base_types.int; range = Common.Span.empty_range}))
       ]
       ~expect_type: (
         Typed.Base_types.int;
@@ -594,14 +616,15 @@ module Infer = struct
 
     let test_not_unit_result_error () = test
       ~stmts: [
-        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="hello"; type_=Typed.Base_types.str}));
-        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.Base_types.int}))
+        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="hello"; type_=Typed.Base_types.str; range = Common.Span.empty_range}));
+        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.Base_types.int; range = Common.Span.empty_range}))
       ]
       ~expect_type: (
         Typed.Base_types.int;
       )
       ~errors: [
         Typed.Erro.IgnoredResult {
+          range = Common.Span.empty_range;
           unexpected = Typed.Base_types.str;
         }
       ]
@@ -613,11 +636,12 @@ module Infer = struct
     ]
   end
 
-  let single_expr_block expr = Typed.Block.{stmts = [Typed.Stmt.Expr expr]}
-  let unit_expr = Typed.Expr.Tuple (Typed.Tuple.{exprs = []})
+  let single_expr_block expr = Typed.Block.{stmts = [Typed.Stmt.Expr expr]; range = Common.Span.empty_range}
+  let unit_expr = Typed.Expr.Tuple (Typed.Tuple.{exprs = []; range = Common.Span.empty_range})
   module Cond = struct 
     let no_else_ok () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+        range = Common.Span.empty_range;
         cases = [Typed.Cond.{
           if_ = single_expr_block @@ typed_local_ident_expr "True" @@ Typed.Base_types.bool;
           then_ = single_expr_block @@ unit_expr;
@@ -632,6 +656,7 @@ module Infer = struct
 
     let no_else_if_mismatch () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+        range = Common.Span.empty_range;
         cases = [Typed.Cond.{
           if_ = single_expr_block @@ typed_local_ident_expr "10" @@ Typed.Base_types.int;
           then_ = single_expr_block @@ unit_expr;
@@ -642,12 +667,16 @@ module Infer = struct
         Typed.Base_types.unit;
       )
       ~errors: [
-        Typed.Erro.IfTypeMismatch {unexpected = Typed.Base_types.int}
+        Typed.Erro.IfTypeMismatch {
+          range = Common.Span.empty_range;
+          unexpected = Typed.Base_types.int
+        }
       ]
       ~expect: []
 
     let no_else_if_tuple_mismatch () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+        range = Common.Span.empty_range;
         cases = [Typed.Cond.{
           if_ = single_expr_block @@ tuple_expr [
             typed_local_ident_expr "10" @@ Typed.Base_types.int;
@@ -661,12 +690,16 @@ module Infer = struct
         Typed.Base_types.unit;
       )
       ~errors: [
-        Typed.Erro.IfTypeMismatch {unexpected = Typed.Type.Tuple [Typed.Base_types.int; Typed.Base_types.int]}
+        Typed.Erro.IfTypeMismatch {
+          range = Common.Span.empty_range;
+          unexpected = Typed.Type.Tuple [Typed.Base_types.int; Typed.Base_types.int]
+        }
       ]
       ~expect: []
 
     let no_else_then_mismatch () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+        range = Common.Span.empty_range;
         cases = [Typed.Cond.{
           if_ = single_expr_block @@ tuple_expr [
             typed_local_ident_expr "x" @@ Typed.Base_types.bool;
@@ -679,12 +712,17 @@ module Infer = struct
         Typed.Base_types.unit;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {unexpected = Typed.Base_types.int; expected = Typed.Base_types.unit}
+        Typed.Erro.BranchTypeMismatch {
+          range = Common.Span.empty_range;
+          unexpected = Typed.Base_types.int;
+          expected = Typed.Base_types.unit
+        }
       ]
       ~expect: []
 
     let ternary_else_mismatch () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+        range = Common.Span.empty_range;
         cases = [Typed.Cond.{
           if_ = single_expr_block @@ tuple_expr [
             typed_local_ident_expr "x" @@ Typed.Base_types.bool;
@@ -697,12 +735,17 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {unexpected = Typed.Base_types.str; expected = Typed.Base_types.int}
+        Typed.Erro.BranchTypeMismatch {
+          range = Common.Span.empty_range;
+          unexpected = Typed.Base_types.str;
+          expected = Typed.Base_types.int
+        }
       ]
       ~expect: []
 
     let multi_cond_second_then_mismatch () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+         range = Common.Span.empty_range;
         cases = [
           Typed.Cond.{
             if_ = single_expr_block @@ tuple_expr [
@@ -723,12 +766,17 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {unexpected = Typed.Base_types.str; expected = Typed.Base_types.int}
+        Typed.Erro.BranchTypeMismatch {
+          range = Common.Span.empty_range;
+          unexpected = Typed.Base_types.str;
+          expected = Typed.Base_types.int
+        }
       ]
       ~expect: []
 
     let multi_cond_else_mismatch () = test
       ~node: (Typed.Expr.Cond (Typed.Cond.{
+        range = Common.Span.empty_range;
         cases = [
           Typed.Cond.{
             if_ = single_expr_block @@ tuple_expr [
@@ -749,7 +797,11 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {unexpected = Typed.Base_types.str; expected = Typed.Base_types.int}
+        Typed.Erro.BranchTypeMismatch {
+          range = Common.Span.empty_range;
+          unexpected = Typed.Base_types.str;
+          expected = Typed.Base_types.int
+        }
       ]
       ~expect: []
 
@@ -778,7 +830,7 @@ module Infer = struct
     "Resolve", Resolve_test.tests;*)
     (* "Block", Block_infer_test.tests *)
     (* "Toplevel", Toplevel_infer_test.tests; *)
-    "Import", Import_test.tests;
+    (* "Import", Import_test.tests; *)
     "Global", Global_infer_test.tests;
   ]
   (* Todo Rest: 
@@ -789,4 +841,8 @@ module Infer = struct
   *)
 end
 
-let () = Infer.run_test ()
+let tests = [
+  "Global", Global_infer_test.tests
+]
+
+(* let () = Infer.run_test () *)

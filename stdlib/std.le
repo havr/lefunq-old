@@ -1,0 +1,4 @@
+sig Str -> Unit
+let println str = foreign "println" (str)
+
+let main = println 10

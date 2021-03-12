@@ -17,7 +17,7 @@ let make start end' value =
 let empty value = make (Pos.empty) (Pos.empty) value
 
 let merge a b = {start = a.start; end' = b.end'}
-
+let merged a b value = {range = {start = a.start; end' = b.end'}; value}
 
 let equals a b = Pos.equals a.start b.start && Pos.equals a.end' b.end'
 

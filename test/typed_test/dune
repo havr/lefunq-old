@@ -1,4 +1,4 @@
-(executable
+(library
  (name typed_test)
  (libraries
   alcotest

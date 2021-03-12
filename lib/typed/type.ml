@@ -2,9 +2,10 @@ open Common
 open Base
 
 type t = Var of string 
-    | Simple of string 
+    | Simple of (string * t list)
     | Lambda of (t * t)
     | Tuple of (t list)
+    | Unit
     | Unknown
 
 type constr = (string)
@@ -23,12 +24,14 @@ let lambda ?(constr=[]) args =
     | [] -> raise (Unreachable)
     | typ :: [] -> typ
     | typ :: rest -> Lambda (typ, make_typ rest)
+
 in make_scheme constr (make_typ args)
 
 let rec to_string = function
+| Unit -> "()"
 | Unknown -> "???"
-| Var v -> v
-| Simple v -> v
+| Var v -> "#" ^ v
+| Simple (v, params) -> "%s %s" %% [v; params |> List.map ~f: to_string |> String.concat ~sep: " "]
 | Tuple vs ->
     let concat = List.map vs ~f:to_string 
     |> String.concat ~sep: ", " in
@@ -50,7 +53,13 @@ let scheme_to_string scheme =
 
 let rec equals a b = match (a, b) with
 | (Var av, Var bv) -> String.equal av bv
-| (Simple av, Simple bv) -> String.equal av bv
+| (Simple (av, ap), Simple (bv, bp)) -> 
+    String.equal av bv && (List.length ap = List.length bp) && (
+        List.zip_exn ap bp 
+        |> List.find ~f: (fun (a, b) -> not @@ equals a b) 
+        |> Option.is_some 
+        |> not
+    )
 | (Tuple av, Tuple bv) -> 
     if List.length av = List.length bv then 
         let count_equals = List.zip_exn av bv 
@@ -63,6 +72,7 @@ let rec equals a b = match (a, b) with
 | _ -> false
 
 let rec free_vars = function
+| Unit -> Set.empty (module String)
 | Unknown -> Set.empty (module String)
 | Simple _  -> Set.empty (module String)
 (* TODO: more convenient *)
@@ -81,3 +91,15 @@ let lists_equal compare a b =
 
 let scheme_equals a b =
     equals a.typ b.typ && lists_equal (String.compare) a.constr b.constr
+
+module Lambda = struct 
+    let rec unroll (arg, ret) =
+        match ret with
+        | Lambda ret -> arg :: (unroll ret)
+        | t -> [arg; t]
+
+    let rec make = function 
+    | [] -> raise (Invalid_argument "making a lambda with no arguments")
+    | h :: [] -> h
+    | h :: t -> Lambda (h, make t)
+end

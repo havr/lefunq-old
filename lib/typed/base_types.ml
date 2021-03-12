@@ -1,6 +1,10 @@
-let int_name = "Std.Base.Int"
-let int = Type.Simple int_name
-let str = Type.Simple "Std.Base.Str"
-let unit = Type.Simple "Std.Base.Unit"
-let bool_name = "Std.Base.Bool"
-let bool = Type.Simple bool_name
+(* TODO: proper names*)
+let int_name = "Int"
+let int = Type.Simple (int_name, [])
+let str = Type.Simple ("Str", [])
+(* TODO: name ()? *)
+let unit = Type.Unit 
+let bool_name = "Bool"
+let bool = Type.Simple (bool_name, [])
+let list_name = "List"
+let list t = Type.Simple ("List", [t])

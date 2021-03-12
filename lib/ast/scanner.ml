@@ -31,6 +31,8 @@ let dot_qualified = seq[char "."; ident_part]
 let qualified_ident = seq[ident_part; maybe @@ many dot_qualified]
 
 let defs = [
+    ((fun _ -> Foreign), 
+        str "foreign");
     ((fun _ -> Sig), 
         str "sig");
     ((fun _ -> Import), 
@@ -65,6 +67,10 @@ let defs = [
         char "(");
     ((fun _ -> CloseParen), 
         char ")");
+    ((fun _ -> OpenBracket), 
+        char "[");
+    ((fun _ -> CloseBracket), 
+        char "]");
     ((fun _ -> Coma), 
         char ",");
     ((fun _ -> Lambda), 

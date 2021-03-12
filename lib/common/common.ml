@@ -1,5 +1,7 @@
 open Base
 
+include Fmt
+
 module Const = Const
 (* TODO: remove pp.ml *)
 module Pos = Pos
@@ -16,6 +18,7 @@ module StringSet = Set.M(String)
 module Err = struct 
     type context = {lines: string list; start_line: int}
     type t = {file: string; range: Span.range; msg: string; context: context option}
+    let to_string e = "%s [%s]: %s" %% [e.file; Span.range_str e.range; e.msg]
 end
 
 module File = struct 

@@ -1,16 +1,6 @@
 open Base
-(* open Common *)
 
-(*
-
-type List t = foreign "List"
-
-module List = {
-    let _foo: Int -> Int = foreign "int"
-    let foo &quux &bar= _foo (quux + bar)
-}
-
-*)
+let foreign_require = "__foreign" (* TODO: proper names *)
 
 let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"; "=="; "!="; "%"]
 
@@ -34,9 +24,9 @@ let get_precedence op =
 
 (* TOOD: module operator-related stuff into a submodule *)
 let operator_mappings = [
-    '$', "dollar";
-    '|', "pipe";
-    '>', "more"
+    '$', "$dollar";
+    '|', "$pipe";
+    '>', "$more"
 ]
 
 let operators = operator_mappings |> List.map ~f:(fun (m, _) -> m)
@@ -46,9 +36,10 @@ let is_operator str =
     List.find ~f:(fun n -> Char.equal n ch) operators |> Option.is_some
 
 let map_operator op = List.fold (String.to_list op) ~init: "" ~f: (fun result char -> 
-    result ^ "$" ^ (List.find_map_exn operator_mappings ~f: (fun (c, alias) -> 
-        if Char.equal c char then Some alias else None ))
-)
+    let mapped = List.find_map operator_mappings ~f: (fun (c, alias) -> 
+        if Char.equal c char then Some alias else None ) in
+    result ^ (Option.value ~default: (Char.to_string char) mapped)
+) 
 
 let ident_value name = 
     if is_operator name then map_operator name else 
@@ -75,7 +66,7 @@ let ident ~ctx n =
     end
     else
     let value = match id.source with
-    | "" -> ident_value Typed.Ident.(n.given_name)
+    | "" -> ident_value id.name
     | source -> 
         if String.equal ctx.source source then 
             ident_value id.name
@@ -104,7 +95,8 @@ let rec apply ~ctx n = begin
     in
     match Typed.Apply.(n.fn) with 
     | Typed.Expr.Ident m -> 
-        let local_name = m.given_name in
+        (* TODO: !!FQN like!! import.value *)
+        let local_name = (Option.value_exn m.resolved).name in
         if not @@ is_js_operator local_name then
             apply_seq ~ctx (Ast.Expr.Ident (ident ~ctx m)) n.args
         else begin
@@ -126,12 +118,14 @@ let rec apply ~ctx n = begin
     | _ -> apply_seq ~ctx (expr ~ctx n.fn) n.args
 
 end and expr ~ctx  = function
+    | Typed.Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (expr ~ctx))
     | Typed.Expr.Value m -> basic m
     | Typed.Expr.Ident m -> Ast.Expr.Ident (ident ~ctx m)
     | Typed.Expr.Apply m -> apply ~ctx m
     | Typed.Expr.Lambda m -> lambda ~ctx m
     | Typed.Expr.Cond m -> cond ~ctx m
-    | Typed.Expr.Tuple _ -> raise Common.TODO
+    | Typed.Expr.Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (expr ~ctx))
+    | Typed.Expr.Foreign f -> Ast.Expr.Ident Ast.Ident.{value = foreign_require ^ "." ^ f.name}
 and cond ~ctx n = 
     let cond_expr = function 
         | (Typed.Stmt.Expr e) :: [] -> expr ~ctx e 
@@ -145,20 +139,22 @@ and cond ~ctx n =
         conds=conds; else_ = n.else_ |> Option.map ~f: (fun m  -> Typed.Block.(block ~ctx m.stmts).stmts)
     }
     in Ast.Expr.Block(Ast.Block.{stmts=[cond_block]})
-and lambda ~ctx n = 
+
+and lambda_like ~ctx params bl =  
     let open Base in
-    match List.rev @@ Typed.Lambda.(n.params) with
+    match List.rev @@ params with
     | [] -> raise (Invalid_argument "lambda without arguments")
     | first :: rest -> 
         let convert_arg = function
-            | Typed.Param.Name n -> [n]
+            | Typed.Param.Name n -> [n.resolved]
             | Typed.Param.Tuple _ -> raise Common.TODO
             | Typed.Param.Unit -> []
         in
-        let inner_lambda = Ast.Lambda.{args = convert_arg first.shape; block = block ~ctx (n.block.stmts)} in
+        let inner_lambda = Ast.Lambda.{args = convert_arg Typed.Param.(first.shape); block = block ~ctx Typed.Block.(bl.stmts)} in
         Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner arg -> 
             Ast.Lambda.{args = convert_arg arg.shape; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
         ) rest)
+and lambda ~ctx n = lambda_like ~ctx Typed.Lambda.(n.params) n.block
 
 and block_stmt ~ctx = function
     | Typed.Stmt.Expr n -> Ast.Block.Expr (expr ~ctx n)
@@ -176,11 +172,14 @@ and block ~ctx n =
 
 and let_ ~ctx n = 
     let const_expr = 
-        match Typed.Block.(n.block.stmts) with
-        | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr ~ctx m)
-        | _ -> Ast.Const.Block  (block ~ctx n.block.stmts)
+        match Typed.Let.(n.params) with
+        | [] ->
+            (match Typed.Block.(n.block.stmts) with
+            | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr ~ctx m)
+            | _ -> Ast.Const.Block  (block ~ctx n.block.stmts))
+        | params -> Ast.Const.Expr (lambda_like ~ctx params n.block)
     (* for nested modules we truncate module path*)
-    in Ast.Const.{ name = ident_value n.scope_name; expr = const_expr }
+    in Common.log[n.scope_name; ident_value n.scope_name; map_operator n.scope_name]; Ast.Const.{ name = ident_value n.scope_name; expr = const_expr }
 
 
 let root_module root =
