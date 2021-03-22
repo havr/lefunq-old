@@ -90,3 +90,31 @@ module Result_monad = struct
     open Base
     let (let*) = Result.Let_syntax.Let_syntax.bind
 end
+
+let try_map list ~f =
+    let rec loop result = function
+    | [] -> Ok (List.rev result)
+    | item :: rest ->
+        match f item with
+        | Ok mapped -> loop (mapped :: result) rest
+        | Error e -> Error e
+    in loop [] list
+
+let try_fold list ~init ~f =
+    let rec loop acc = function
+    | [] -> Ok acc
+    | item :: rest ->
+        match f acc item with
+        | Ok acc' -> loop acc' rest
+        | Error e -> Error e
+    in loop init list
+
+module Util = struct 
+    module Lists = struct 
+        let last_rest l = match List.rev l with
+        | [] -> raise (Invalid_argument "list is empty")
+        | last :: rest -> (last, List.rev rest)
+
+        let flat_map ~f = List.fold ~init: [] ~f: (fun acc item -> acc @ (f item))
+    end
+end

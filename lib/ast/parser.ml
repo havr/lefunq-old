@@ -48,6 +48,7 @@ module Lexemes = struct
     let sig' = match_map(function | Sig -> Some () | _ -> None)
     let func_arrow = match_map(function | FuncArrow -> Some () | _ -> None)
     let foreign = match_map(function | Foreign -> Some () | _ -> None)
+    let modu = match_map(function | Module -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -61,6 +62,20 @@ let newlines = let+ _ = one_more @@ Lexemes.line_break in ()
 let ignore_newline p = 
     let+ _ = many @@ Lexemes.line_break 
     and+ v = p in v
+
+(* TODO: move it in parlex or common *)
+let forward_fun () = 
+    let value = ref None in
+    let proxy arg = match !value with 
+        | None -> raise (Invalid_argument ("forward declaration hasn't been initialized yet"))
+        | Some fn -> fn arg
+    in
+    let init_value v = match !value with
+        | None -> value := (Some v)
+        | Some _ -> raise (Invalid_argument ("forward declaration is initialized twice"))
+    in proxy, init_value
+
+let (modu: unit -> Node.Module.t Comb.t) , init_modu  = forward_fun ()
 
 let expect ?ctx ?exp p =  { fn = fun state ->
     match p.fn state with
@@ -535,11 +550,27 @@ and module_entries () =
         (fun () -> map (sig_()) (fun v -> Node.Module.Let v));
         (fun () -> map (let_()) (fun v -> Node.Module.Let v));
         (fun () -> map (import) (fun v -> Node.Module.Import v));
+        (fun () -> map (modu ()) (fun m -> Node.Module.Module m));
     ] in let separated_block_stmt = 
         let+ stmt = ignore_newline @@ (root_stmt ())
         and+ _ = maybe @@ Lexemes.stmt_separator in
             stmt
     in many separated_block_stmt
+
+let () = init_modu (fun () ->
+    let+ keyword = Lexemes.modu
+    and+ name = expect @@ Lexemes.ident
+    and+ _ = expect @@ Lexemes.eq
+    and+ _ = expect @@ Lexemes.open_block
+    and+ entries = (module_entries ())
+    and+ close_paren = expect @@ Lexemes.close_block
+    in Node.Module.{
+        keyword;
+        range = Span.merge keyword.range close_paren.range;
+        name = name;
+        entries
+    }
+)
 
 let root = 
     let+ entries = module_entries ()

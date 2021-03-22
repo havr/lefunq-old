@@ -4,10 +4,10 @@ open Common
 
 let module_of code = 
     match Ast.of_string ~file:"" code with
-    | Error e -> Alcotest.fail (Common.Err.to_string e); (* TODO: proper error string *)
+    | Error e -> 
+        Alcotest.fail (Common.Err.to_string e); (* TODO: proper error string *)
     | Ok stmts ->
-        let resolver = Typed.Resolver.Scope.root "" in
-        Typed.Global.root ~resolve_source: (fun _ -> raise Common.TODO) "" resolver stmts
+        Typed.root ~source: "" ~resolve_source: (fun _ -> raise Common.TODO) stmts
 
 let split ~equals expect got =
     let expected_not_got = List.filter expect ~f: (fun e ->
@@ -20,7 +20,7 @@ let split ~equals expect got =
 
 let test ?(expect_errors=[]) ~code ~expect = 
     match module_of code with
-    | Ok (modu, _) -> (
+    | Ok modu -> (
         let lookup_scope_name modu scope_name =
             Option.value_exn (Typed.Node.Module.(modu.entries) 
             |> List.find_map ~f:(function

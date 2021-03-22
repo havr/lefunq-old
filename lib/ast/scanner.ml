@@ -31,6 +31,8 @@ let dot_qualified = seq[char "."; ident_part]
 let qualified_ident = seq[ident_part; maybe @@ many dot_qualified]
 
 let defs = [
+    ((fun _ -> Module), 
+        str "module");
     ((fun _ -> Foreign), 
         str "foreign");
     ((fun _ -> Sig), 

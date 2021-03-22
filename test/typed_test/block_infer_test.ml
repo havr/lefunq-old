@@ -15,7 +15,7 @@ let todo_hello () =
             range = Span.empty_range;
         } in
         let transformed = Typed.Transform.block block in
-        let resolve_ctx = Resolve.make_context (Resolver.Scope.local_root (Resolver.Scope.root "")) in
+        let resolve_ctx = Resolve.make_context (Resolver.Scope.toplevel (Resolver.Scope.root "")) in
         let block = Resolve.block resolve_ctx transformed in
         let infer_ctx = Infer.make_ctx ~env: (Infer.make_env()) in
         let typed = Infer.block ~ctx: infer_ctx block in

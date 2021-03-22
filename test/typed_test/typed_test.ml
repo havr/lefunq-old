@@ -1,18 +1,19 @@
+let resolved name = Typed.Symbol.Resolved.make name @@ Some (Typed.Symbol.Id.make "" [] name)
 module Fake = struct 
   let local_ident name type_ = 
     Typed.Ident.{
       range = Common.Span.empty_range;
-      given_name = name;
+      resolved = resolved name;
+      resolution = [];
       scheme = Some (Typed.Type.make_scheme [] type_); (* TODO: is it really needed here *)
-      resolved = Some (Typed.Symbol.Id.make "" name);
     }
 
   let global_ident name type_ = 
     Typed.Ident.{
       range = Common.Span.empty_range;
-      given_name = name;
+      resolved = resolved name;
+      resolution = [];
       scheme = Some (Typed.Type.make_scheme [] type_); (* TODO: is it really needed here *)
-      resolved = Some (Typed.Symbol.Id.make "" name);
     }
 end
 
@@ -154,30 +155,31 @@ end
 let simple name = Typed.Type.Simple (name, [])
 module Infer = struct 
   let local_ident_expr name = Typed.Expr.Ident (Typed.Ident.{
+    resolved = resolved name;
+    resolution = [];
     range = Common.Span.empty_range;
-    given_name = name;
-    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = None;
   })
 
   let typed_local_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
+    resolved = resolved name;
+    resolution = [];
     range = Common.Span.empty_range;
-    given_name = name;
-    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
   let global_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
+    resolved = resolved name;
+    resolution = [];
     range = Common.Span.empty_range;
-    given_name = name;
-    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
   let global_scheme_expr name typ = Typed.Expr.Ident (Typed.Ident.{
+    resolved = resolved name;
+    resolution = [];
+
     range = Common.Span.empty_range;
-    given_name = name;
-    resolved = Some (Typed.Symbol.Id.make "" name);
     scheme = Some typ;
   })
 
@@ -227,7 +229,7 @@ module Infer = struct
 
   let test ?(errors=[]) ~node ~expect_type ~expect = 
     let ctx = Typed.Infer.{
-      tempvar = Typed.Util.make_tempvar_gen "t";
+      tempvar = Typed.Type_util.make_tempvar_gen "t";
       errors = [];
       substs = Map.empty(module String);
       env = Map.empty(module String);
@@ -547,7 +549,7 @@ module Infer = struct
     (* TODO: use test block *)
     let test ?(errors=[]) ~stmts ~expect_type ~expect = 
     let ctx = Typed.Infer.{
-      tempvar = Typed.Util.make_tempvar_gen "t";
+      tempvar = Type_util.make_tempvar_gen "t";
       errors = [];
       substs = Map.empty(module String);
       env = Map.empty(module String);
@@ -595,7 +597,7 @@ module Infer = struct
   module Block = struct 
     let test ?(errors=[]) ~stmts ~expect_type ~expect = 
       let ctx = Typed.Infer.{
-        tempvar = Typed.Util.make_tempvar_gen "t";
+        tempvar = Typed.Type_util.make_tempvar_gen "t";
         errors = [];
         substs = Map.empty(module String);
         env = Map.empty(module String);

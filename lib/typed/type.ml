@@ -30,7 +30,7 @@ in make_scheme constr (make_typ args)
 let rec to_string = function
 | Unit -> "()"
 | Unknown -> "???"
-| Var v -> "#" ^ v
+| Var v -> "?" ^ v
 | Simple (v, params) -> "%s %s" %% [v; params |> List.map ~f: to_string |> String.concat ~sep: " "]
 | Tuple vs ->
     let concat = List.map vs ~f:to_string 

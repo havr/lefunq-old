@@ -17,6 +17,14 @@ let rec names = function
 | Name n -> [n]
 | Unit -> []
 
+let rec pretty_print p = 
+    let shape = match p.shape with
+    | Unit -> Pp.(branch [text "()"] [])
+    | Name name -> Pp.(branch [text name.given; text name.resolved] [])
+    | Tuple t -> Pp.(branch [text "TUPLE"] (t |> List.map ~f: pretty_print))
+    in 
+    Pp.(branch [text "PARAM"; p.type' |> Type.to_string |> text] [shape])
+
 let rec to_string a =
     let type_suffix = match a.type' with 
     | Type.Unknown -> ""

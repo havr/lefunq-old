@@ -1,6 +1,6 @@
 open Base
 open Common
-
+open Type_util
 include Node
 (*
 REFACTOR:
@@ -10,6 +10,7 @@ REFACTOR:
 
 module Type = Type 
 module Node = Node
+module Type_util = Type_util
 
 let map_fst fn tuple = 
     let (fst, snd) = tuple in (fn fst, snd)
@@ -23,7 +24,6 @@ let stateful_map ~init ~f list  =
 
 module Symbol = Symbol
 
-open Util
 module Resolver = Resolver
 module Param = Param
 module Base_types = Base_types
@@ -34,27 +34,6 @@ module Erro = Erro
 module Util = Util
 
 (* TODO: move somewhere *)
-
-module TypeStore = struct 
-    type t = {
-        mutable map: Type.t StringMap.t;
-        mutable bind: string StringMap.t;
-    }
-
-    let make () = {
-        map = Map.empty (module String);
-        bind = Map.empty (module String);
-    }
-    let add st name def = 
-        ignore (Map.set st.map ~key: name ~data: def)
-
-    let bind st name typename =
-        ignore (Map.set st.bind ~key: name ~data: typename)
-
-    let get st name =
-        Map.find_exn st.map name
-end
-
 
 
 module Subst = struct 
@@ -369,18 +348,18 @@ module Infer = struct
         match Ident.(m.scheme) with
         | Some s -> 
             instantiate_scheme s
-        | None -> match m.resolved with
+        | None -> match m.resolved.absolute with
             | None ->
                 (* TODO: error node? *)
                 ctx.tempvar()
-            | Some {name=name; source=""} -> 
+            | Some {name=name; source=""; _} -> 
                 begin match Map.find ctx.env (name) with
                 | Some s -> 
                     instantiate_scheme s
                 | None -> 
                     raise Common.TODO (* TODO: spawn error var? *)
                 end
-            | Some {name=_; source=_} -> 
+            | Some {name=_; source=_; _} -> 
                 raise Common.TODO (* TODO: spawn error var? *)
 
     and binding ~ctx n =
@@ -501,9 +480,8 @@ end
 (* TODO: better name *)
 module Global = struct 
     let binding ~source resolver node = 
-        let transformed = Transform.binding node in
-        let resolve_ctx = Resolve.make_context ~source (Resolver.Scope.local_root resolver) in
-        let resolved = Resolve.binding resolve_ctx transformed in
+        let ctx = Resolve.make_context ~source resolver in
+        let resolved = Resolve.toplevel_binding ctx node in
         let env = match Let.(resolved.is_rec) with
         | true -> 
             Map.add_exn (Map.empty(module String)) 
@@ -525,61 +503,80 @@ module Global = struct
         in
         let scheme = Type.make_scheme (Infer.free_vars ~ctx: infer_ctx result_lambda) result_lambda in
         (* *)
-        let scope_name = Resolver.Scope.add_binding resolver Let.(resolved.given_name) scheme in
+        Resolver.Scope.set_binding_scheme resolver Let.(resolved.given_name) scheme;
             (* TODO: proper names *)
         let typed_node = Let.{ resolved with
             scheme = Some scheme;
-            scope_name = scope_name.name; (* TODO: let's use fully-qualified symbols everywhere? *)
             block;
         } in
-        let resolve_errors = resolve_ctx.errors in
+        let resolve_errors = ctx.errors in
         let infer_errors = infer_ctx.errors in
         let errors = List.map (resolve_errors @ result_errors @ infer_errors) ~f:(Subst.apply_to_error infer_ctx.substs) in
+        Common.log["xxx"; List.length errors |> Int.to_string; Pp.to_string [typed_node |> Node.Let.pretty_print]];
         (typed_node, errors)
     
-    let try_map list ~f =
-        let rec loop result = function
-        | [] -> Ok (List.rev result)
-        | item :: rest ->
-            match f item with
-            | Ok mapped -> loop (mapped :: result) rest
-            | Error e -> Error e
-        in loop [] list
+    let expose modu_id entries = 
+        let make_id scope_name = Symbol.Id.make Symbol.Id.(modu_id.source) (modu_id.modules @ [modu_id.name]) scope_name in
+        entries
+        |> List.filter ~f: (function 
+            | Module.Module m -> not @@ String.is_prefix ~prefix:"_" m.given_name
+            | Module.Binding b -> not @@ String.is_prefix ~prefix:"_" b.given_name
+            | Module.Import _ -> false
+        )
+        |> List.fold ~init: (Symbol.Module.empty modu_id) ~f: (fun sym node -> 
+            let given_name = (match node with 
+                    | Module.Module m -> m.given_name
+                    | Module.Binding b -> b.given_name
+                    | _ -> raise Common.Unreachable) in 
+            { sym with exposed = Map.update sym.exposed given_name
+                ~f: (fun exposed -> 
+                    let exposed = (Option.value exposed ~default: (Symbol.Module.empty_exposed)) in
+                    (match node with 
+                    | Module.Module m -> 
+                        { exposed with modu = Some (Symbol.Module.make (make_id m.scope_name) m.exposed) } 
+                    | Module.Binding b -> 
+                        { exposed with binding = Some (Symbol.Binding.make (make_id b.scope_name) (Option.value ~default: Type.unknown_scheme b.scheme)) } 
+                    | _ -> raise Common.Unreachable))
+            } 
+        ) 
 
-    let root ~resolve_source source resolver root_node =
+    let rec modu ~resolve_source resolver id m = 
         (* TODO: Symbol.Module / Typedef.Module / Def.Module *)
         (* TODO: Symbol.Id / some global id *)
         (* s/typedefs/typs in Symbol.t: typedef is type definition *)
-        Common.log["123"];
-        let entries = try_map Ast.Node.Root.(root_node.entries) ~f:(function
-            | Let b -> 
-                let (typ, errs) = binding ~source resolver b in
-                Common.log["let it b"];
+        match try_map Node.Module.(m.entries) ~f: (function
+            | Node.Module.Module m -> 
+                let id = Resolver.Scope.make_id resolver m.given_name in
+                let m = {m with scope_name = id.name} in
+                let res = Resolver.Scope.sub_module id.name resolver in
+                (match modu ~resolve_source res id m with
+                | (Error e) -> Error e
+                | (Ok tm) -> 
+                    let modu = Symbol.Module.{
+                        id; exposed = Module.(tm.exposed)
+                    } in
+                    Resolver.Scope.set_resolution resolver m.given_name (fun res -> { res with
+                        modu = Some modu;
+                    });
+                    Ok (Module.Module tm))
+            | Node.Module.Binding b ->
+                let (typ, errs) = binding ~source: id.source resolver b in
                 (match errs with 
                     | [] -> Ok (Module.Binding typ)
                     | _ -> Error errs)
-            | Import im -> 
-                let (import, errs) = Resolve.import resolve_source resolver (Transform.import im) in
-                if List.length errs > 0 then Error errs else Ok (Module.Import import)
-        ) in
-        match entries with
-        | Error e -> Error e
-        | Ok entries -> 
-            let export = List.fold entries ~init:(Symbol.Module.empty (Symbol.Id.make source ""))  ~f:(fun export -> function
-                | Module.Binding b -> if (String.is_prefix ~prefix:"_" b.given_name) then export else begin 
-                    let internal = Symbol.Id.make source b.scope_name in
-                    let exposed = Symbol.Id.make source b.given_name in
-                    let def = Symbol.Binding.make ~internal exposed (Option.value ~default: Type.unknown_scheme b.scheme) in
-                    {export with bindings = Map.set export.bindings ~key: b.given_name ~data: def }
-                end
-                | _ -> export
-            ) in
-            Ok (Module.{name=""; entries}, export)
-
+            | Node.Module.Import im -> 
+                let (import, errs) = Resolve.import resolve_source resolver im in
+                (match errs with
+                | [] -> Ok (Module.Import import)
+                | errs -> Error errs)
+        ) with
+            | Error errors -> Error errors
+            (* TODO: return map not module *)
+            | Ok entries -> let exposed = expose id entries in
+                Ok (Module.{ m with entries; exposed = exposed.exposed })
 end
 
 let root ~source ~resolve_source m = 
-    Common.log["213"];
     let int_op = Type.lambda [Base_types.int; Base_types.int; Base_types.int] in
     let cmp_op = Type.lambda [Base_types.int; Base_types.int; Base_types.bool] in
     let predefined = [
@@ -601,4 +598,9 @@ let root ~source ~resolve_source m =
     List.iter predefined ~f:(fun (name, scheme) -> 
         ignore @@ Resolver.Scope.implant_binding resolver name scheme);
     (* TODO: pass name *)
-    Global.root ~resolve_source source resolver m
+    let tf = Transform.root m in 
+    let m = Global.modu ~resolve_source resolver (Symbol.Id.make source [] "") Node.Module.{scope_name = ""; given_name = ""; exposed = Map.empty(module String); entries = tf.entries} in
+    (match m with
+    | Ok m -> Common.log["~~~"; Pp.to_string [m |> Node.Module.pretty_print]];
+    | Error _ -> ());
+    m

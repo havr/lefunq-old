@@ -10,7 +10,7 @@ let shadowing () =
     ] in
     let input_block = (Block.{stmts=input; range = Span.empty_range}) in
     let global = Resolver.Scope.root "" in
-    let ctx = Resolve.make_context (Resolver.Scope.local_root global) in
+    let ctx = Resolve.make_context (Resolver.Scope.toplevel global) in
     let resolved = Resolve.block ctx input_block in
     let expect = Block.{
         range = Span.empty_range;

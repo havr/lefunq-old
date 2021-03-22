@@ -16,7 +16,7 @@ let check_result args_expect args_got =
 
 let test ~given ~expect =
     (* TODO: make TypeNamer a function *)
-    let gen = Util.make_tempvar_gen "t" in
+    let gen = Type_util.make_tempvar_gen "t" in
     let typed = Resolve.type_params gen given in
     check_result expect typed
 

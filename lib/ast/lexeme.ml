@@ -23,6 +23,7 @@ type t = Int of string
     | Sig
     | FuncArrow
     | Foreign
+    | Module
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -51,6 +52,7 @@ let to_string lexeme = match lexeme with
     | Sig -> "sig"
     | FuncArrow -> "->"
     | Foreign -> "foreign"
+    | Module -> "module"
     | Error e -> "error: " ^ e
 
 let eof = Eof

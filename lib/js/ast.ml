@@ -55,9 +55,11 @@ end
 
 and Ident: sig 
     type t = {value: string}
+    val make: string -> t
 end = struct
     type t = {value: string}
 
+    let make value = {value}
     (* let from_ir ir = {value = Typed.(ir.local_name)} *)
 end
 
@@ -83,19 +85,39 @@ and Lambda: sig
 end = struct
     type t = {args: string list; block: Block.t}
 end
-
-and Block: sig 
-    type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t
-    and t = {stmts: stmt list}
+and Assign: sig 
+    type t = { ident: Ident.t; expr: Expr.t }
+    val make: Ident.t -> Expr.t -> t
 end = struct
-    type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t
+    type t = { ident: Ident.t; expr: Expr.t }
+    let make ident expr = {ident; expr}
+end
+and Block: sig 
+    type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t | Assign of Assign.t
     and t = {stmts: stmt list}
+    val assign: Assign.t -> stmt
+end = struct
+    type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t | Assign of Assign.t
+    and t = {stmts: stmt list}
+    let assign a = Assign a
 end
 
+and Object: sig 
+    type entry = | Kv of (string * Expr.t) | Pun of string
+    type t = {
+        entries: entry list
+    }
+end = struct 
+    type entry = | Kv of (string * Expr.t) | Pun of string
+    type t = {
+        entries: entry list
+    }
+end
 and Expr: sig 
     type t = 
         | Num of Num.t 
         | Str of Str.t 
+        | Object of Object.t
         | Unary of Unary.t 
         | Binary of Binary.t 
         | Apply of Apply.t 
@@ -105,10 +127,13 @@ and Expr: sig
         | Parens of Expr.t
         | Li of (Expr.t list)
         | Void
+
+    val ident: Ident.t -> t
 end = struct
     type t = 
         | Num of Num.t 
         | Str of Str.t 
+        | Object of Object.t
         | Unary of Unary.t 
         | Binary of Binary.t 
         | Apply of Apply.t 
@@ -118,6 +143,8 @@ end = struct
         | Parens of Expr.t
         | Li of (Expr.t list)
         | Void
+
+    let ident id = Ident id
 end
 
 and Return: sig 
@@ -171,6 +198,7 @@ module Prn = struct
         | None -> []) in
         seq @@ (separate (str " else ") ifs)
     and stmt = function
+        | Block.Assign n -> seq [ident n.ident; str "="; expr n.expr; str ";"]
         | Block.Expr n -> seq[expr n; str ";"]
         | Block.Const n -> seq[const n; str ";"]
         | Block.Block n -> block n
@@ -190,9 +218,16 @@ module Prn = struct
         str Binary.(n.op);
         expr Binary.(n.right);
     ]
+    and objec' obj = 
+        let entries = Object.(obj.entries) |> List.map (function
+            | Object.Pun k  -> seq [str k]
+            | Object.Kv (k, e) -> seq [str k; str ":"; expr e]
+        ) |> seq ~sep: ",\n" in
+        seq [str "{"; entries; str "}"]
     and expr = function
         | Expr.Lambda n -> lambda n
         | Expr.Num n -> num n
+        | Expr.Object n -> objec' n
         | Expr.Ident n -> ident n
         | Expr.Void -> void
         | Expr.Str n -> string n
@@ -227,3 +262,6 @@ module Prn = struct
 end
 
 (* TODO: name -> const_name, const_block *)
+
+let const name expr = Const.{name; expr}
+let const_block name stmts = Const.{name; expr = Const.Block Block.{stmts}}

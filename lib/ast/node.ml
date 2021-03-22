@@ -27,7 +27,7 @@ module Import = struct
         source: name;
     }
 
-    let tree_repr node =
+    let pretty_print node =
         let open Common.Pp in
         let rec name n = 
             let value = match n.rename with
@@ -147,6 +147,7 @@ and Let: sig
     }
 
     val expr_range: expr -> Span.range
+    val pretty_print: t -> Pp.branch
 end = struct 
     type expr = 
         | Expr of Expr.t
@@ -164,6 +165,8 @@ end = struct
     let expr_range = function
     | Expr e -> Expr.range e
     | Block b -> b.range
+
+    let pretty_print n = Pp.(branch [text "LET"; spanned n.ident] [])
 end
 and Block: sig
     type block_stmt = 
@@ -298,9 +301,33 @@ end = struct
     | Cond n -> n.range
 end
 and Module: sig
-    type entry = Let of Let.t | Import of Import.t
+    type entry = Let of Let.t | Import of Import.t | Module of Module.t
+
+    type t = {
+        range: Span.range;
+        keyword: unit Span.t;
+        name: string Span.t;
+        entries: entry list
+    }
+
+    val pretty_print: t -> Pp.branch
 end = struct 
-    type entry = Let of Let.t | Import of Import.t
+    type entry = Let of Let.t | Import of Import.t | Module of Module.t
+    type t = {
+        range: Span.range;
+        keyword: unit Span.t;
+        name: string Span.t;
+        entries: entry list
+    }
+
+    let pretty_print n = 
+        Pp.(branch [text "MODULE"; spanned n.name] (
+            List.map n.entries ~f: (function
+                | Let t -> Let.pretty_print t
+                | Import i -> Import.pretty_print i
+                | Module m -> Module.pretty_print m
+            )
+        ))
 end
 
 module Root = struct 

@@ -1,5 +1,6 @@
 open Base
-open Util
+open Type_util
+open Common
 open Node
 (* open Error *)
 
@@ -156,20 +157,23 @@ let local_scope ctx = {
 }
 
 let ident ctx ident = 
-    match Scope.lookup ctx.scope Node.Ident.(ident.given_name) with
-    | Some {binding = Some binding; _} -> 
+    let resolution = Node.Ident.(ident.resolution) @ [ident.resolved] in
+    match Scope.lookup ctx.scope resolution with
+    | Some ({binding = Some binding; _}, resolved) -> 
         (* TODO: continue here: local bindings use their resolved, not exposed values *)
-        Common.log [ctx.source; binding.internal.name; ">>"; binding.exposed.name];
+        let resolved, resolution = resolved @ [Symbol.Resolved.make ident.resolved.given (Some binding.id)]
+            |> Util.Lists.last_rest in
         { ident with
             scheme = Some binding.scheme;
-            resolved = Some (if String.equal "" binding.exposed.source then binding.internal else binding.exposed)
+            (* TODO: remove the if *)
+            resolved; resolution;
         }
-    | Some {binding = None; _} -> 
+    | Some ({binding = None; _}, _) -> 
     (* TODO: rly *)
-        add_errors ~ctx [Erro.UndeclaredIdentifier {given_name = ident.given_name; range = ident.range}];
+        add_errors ~ctx [Erro.UndeclaredIdentifier {given_name = ident.resolved.given; range = ident.range}];
         ident
     | None -> 
-        add_errors ~ctx [Erro.UndeclaredIdentifier {given_name = ident.given_name; range = ident.range}];
+        add_errors ~ctx [Erro.UndeclaredIdentifier {given_name = ident.resolved.given; range = ident.range}];
         ident
 
 let flatten list = 
@@ -178,7 +182,12 @@ let flatten list =
         | a :: rest -> flatten' (result @ a) rest
     in flatten' [] list
 
-let rec binding ctx node = 
+let sub_ctx ctx scope = {ctx with scope = scope ctx.scope}
+
+let rec local_binding ctx node = 
+    binding ~sub_scope: (Resolver.Scope.sub_local) ctx node
+
+and binding ~sub_scope ctx node = 
     let params, result = match Let.(node.sigt) with 
         | None -> 
             let map_param param = match Param.(param.type') with
@@ -187,7 +196,8 @@ let rec binding ctx node =
             in (node.params |> List.map ~f:map_param), (ctx.tempvar())
         | Some sigt -> apply_sig sigt node.params
     in
-    let params, ctx' = lambda_ctx ctx params in
+    let ctx' = sub_ctx ctx sub_scope in
+    let params = resolve_params ctx' params in
     let param_types = List.map params 
         ~f:(fun param -> Param.(param.type')) @ [result]
     in
@@ -201,7 +211,7 @@ let rec binding ctx node =
     let scheme = Type.make_scheme free_vars typ in
     Option.iter node.sigt ~f: (fun opt -> Common.log ["sigt"; Type.to_string opt]);
     Common.log [node.given_name; Type.scheme_to_string scheme];
-    match Let.(node.is_rec) with
+    let result = match Let.(node.is_rec) with
     | true ->
         let id = Scope.add_binding ctx.scope Let.(node.given_name) scheme in
         { node with 
@@ -213,6 +223,7 @@ let rec binding ctx node =
         }
     | false ->
         let b = block ctx' Let.(node.block) in
+        ctx.errors <- ctx.errors @ ctx'.errors;
         let id = Scope.add_binding ctx.scope Let.(node.given_name) scheme in
         { node with 
             scheme = Some scheme;
@@ -221,13 +232,16 @@ let rec binding ctx node =
             params = params;
             result = result
         }
+    in 
+        ctx.errors <- ctx.errors @ ctx'.errors;
+        result
 
 and block ctx n =
     let stmts = List.map Block.(n.stmts) ~f:(function 
         | Stmt.Expr n -> 
             Stmt.Expr (expr ctx n)
         | Stmt.Let n -> 
-            let result = (binding ctx n) in
+            let result = (local_binding ctx n) in
             Stmt.Let result
         | Stmt.Block 
             _ -> raise Common.TODO (* Disallow block inside blocks *)
@@ -254,7 +268,7 @@ and cond ctx n =
     ) in
     let else_ = Cond.(n.else_) |> Option.map ~f: (block (local_scope ctx)) in
     { n with cases = cases; else_ = else_ }
-and lambda_ctx ctx params = 
+and resolve_params ctx params = 
     (* TODO: report unused idents *)
     (* let rec extract_names param = match Param.(param.shape) with
     | Param.Name n -> [n.given, Type.make_scheme [] param.type']
@@ -267,23 +281,29 @@ and lambda_ctx ctx params =
             else (Map.add_exn map ~key: name ~data: typ)) in
         Map.to_alist as_map
     in  *)
-    let sub = Resolver.Scope.sub_local ctx.scope in
     let typed_params = type_params ctx.tempvar params in
     let rec resolve_param param = Param.{ param with shape = match (param.shape) with
-            | Name n -> Name {n with resolved = (Scope.add_binding sub n.given (Type.make_scheme [] param.type')).name}
+            | Name n -> Name {n with resolved = (Scope.add_binding ctx.scope n.given (Type.make_scheme [] param.type')).name}
             | Tuple t -> Tuple (List.map t ~f: resolve_param)
             | Unit -> Unit
         }
     in
     let typed_params = List.map ~f:resolve_param typed_params in
     (* let type_names = report_duplicates (List.map typed_params ~f:extract_names |> List.concat) in *)
-    typed_params, {ctx with scope = sub}
+    typed_params
+
 and lambda ctx n = 
     (* TODO: resolve type names *)
-    let typed_params, ctx' = lambda_ctx ctx Lambda.(n.params) in
+    let ctx' = sub_ctx ctx (Resolver.Scope.sub_local) in
+    let typed_params = resolve_params ctx' Lambda.(n.params) in
     let b = block ctx' n.block in
     ctx.errors <- ctx.errors @ ctx'.errors;
     { n with params = typed_params; block = b}
+
+
+let toplevel_binding ctx n =
+    binding ~sub_scope: (Resolver.Scope.toplevel) ctx n
+
 
 type resolve_source_error = 
     | CyclicDependency of string list
@@ -291,14 +311,25 @@ type resolve_source_error =
     | SystemError
     | SourceError
 
+
 let import resolve_source resolver node = 
     let errors = ref [] in
-    let rec lookup_path resol = function
-    | [] -> Ok resol
-    | name :: rest ->
-      match Resolver.Scope.lookup_resol resol [Common.Span.(name.value)] with
-      | None -> Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = name })
-      | Some r -> lookup_path r rest
+
+    let rec lookup_exposed names = function
+    | [] -> raise (Invalid_argument "no path is provided")
+    | namespan :: [] -> (match Map.find names Common.Span.(namespan.value) with 
+      | None -> Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = namespan})
+      | Some m -> Ok m
+    )
+    | moduspan :: rest -> (
+        match Map.find names Common.Span.(moduspan.value) with
+        | None ->  Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = moduspan})
+        | Some exposed -> (match Symbol.Module.(exposed.modu) with
+        (* TODO: Is not a module error *)
+            | None -> Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = moduspan})
+            | Some modu -> lookup_exposed Symbol.Module.(modu.exposed) rest
+        )
+    )
     in
     let node' = match resolve_source Node.Import.(node.source.value) with
     (* TODO: errors when shadowing imports *)
@@ -316,7 +347,7 @@ let import resolve_source resolver node =
         node
     | Ok (resolved_source, source_scope) ->
         let names = List.map node.names ~f:(fun {name; path; _} -> 
-            match lookup_path source_scope path with
+            match lookup_exposed source_scope path with
             | Error e -> 
                 errors := e :: !errors;
                 Node.Import.{name; path; resolved = None}

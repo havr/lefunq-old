@@ -22,11 +22,18 @@ module Fs = struct
         cwd = Caml.Sys.getcwd
     } in q
 
-    let mem () = 
-        let files = ref (FsMap.empty) in {
-            read = (fun filename -> !files |> FsMap.find_opt filename);
-            write = (fun filename content -> files := !files |> FsMap.add filename content);
-            exists = (fun filename -> !files |> FsMap.find_opt filename |> Option.is_some);
+    let mem files = 
+        let open Base in
+        let fs = 
+            files 
+            |> List.fold 
+                ~init: (FsMap.empty) 
+                ~f:(fun fsmap (name, content) -> FsMap.add name content fsmap) 
+            |> ref
+        in {
+            read = (fun filename -> !fs |> FsMap.find_opt filename);
+            write = (fun filename content -> fs := !fs |> FsMap.add filename content);
+            exists = (fun filename -> !fs |> FsMap.find_opt filename |> Option.is_some);
             cwd = fun () -> ""
         }
 end
@@ -68,14 +75,13 @@ module Frontend = struct
     }
     type result = {
         source: string;
-        export: Typed.Symbol.Module.t;
         root: Typed.Module.t
     }
 
     type context = {
         config: config;
         callback: result -> unit;
-        mutable processed: Typed.Symbol.Module.t StringMap.t;
+        mutable sources: Typed.Symbol.Module.t StringMap.t;
         mutable errors: Common.Err.t list
     }
 
@@ -234,25 +240,19 @@ module Frontend = struct
                     | Some loop -> 
                         Error (Typed.Resolve.CyclicDependency loop)
                     | None ->
-                        match Map.find ctx.processed file_name with
-                        | Some r -> 
-                            let scope = Typed.Resolver.Scope.{ 
-                                modu = Some r;
-                                binding = None;
-                                typedef = None
-                            } in
-                            Ok (file_name, scope)
+                        match Map.find ctx.sources file_name with
+                        | Some r -> Ok (file_name, Typed.Symbol.Module.(r.exposed))
                         | None ->
                             match compile (file_name :: import_stack) file_name with
                             | Error `NotFound -> Error Typed.Resolve.SourceNotFound
                             | Error `SourceErrors -> Error Typed.Resolve.SourceError
                             | Error _ -> Error Typed.Resolve.SourceNotFound
-                            | Ok resolved -> 
-                                let scope = Typed.Resolver.Scope.{ 
+                            | Ok resolved -> Ok (file_name, Typed.Symbol.Module.(resolved.exposed))
+                                (* let scope = Typed.Symbol.Module.{ 
                                     modu = Some resolved; 
                                     binding = None;
                                     typedef = None 
-                                } in Ok (file_name, scope)
+                                } in Ok (file_name, scope) *)
         and compile import_stack file_name = 
                 match ctx.config.fs.read file_name with
                 | None -> Error `ReadError
@@ -266,10 +266,11 @@ module Frontend = struct
                         | Error errors ->
                             ctx.errors <- (List.map errors ~f: (convert_typed_error file_name)) @ ctx.errors;
                             Error `SourceErrors
-                        | Ok (root, def) ->
-                            ctx.processed <- Map.add_exn ctx.processed ~key: file_name ~data: def;
-                            ctx.callback {source=file_name; root; export = def};
-                            Ok def
+                        | Ok modu ->
+                            let source_module = Typed.Symbol.Module.{id = Typed.Symbol.Id.make file_name [] ""; exposed = modu.exposed} in
+                            ctx.sources <- Map.add_exn ctx.sources ~key: file_name ~data: source_module;
+                            ctx.callback {source=file_name; root = modu};
+                            Ok source_module
                 
         in match resolve_source_file ~ctx [] source with
             | None -> Error `NotFound
@@ -279,7 +280,7 @@ module Frontend = struct
         let ctx = {
             config; 
             callback;
-            processed = Map.empty(module String); 
+            sources = Map.empty(module String); 
             errors = []
         } in
         match process ~ctx entrypoint with
@@ -406,10 +407,10 @@ module JsBackend = struct
                     (* TODO: check it earlier? *)
                     add_dep ~name: (Js.Convert.foreign_require) (Option.value_exn foreign_bindings)
                 | Ident id -> 
-                    (match id.resolved with 
-                    | None -> Common.log [id.given_name] 
-                    | Some _ -> ());
-                    add_dep (Option.value_exn id.resolved).source 
+                    (match (id.resolution @ [id.resolved]) with
+                        | [] -> raise (Common.Unreachable)
+                        | res :: _ -> add_dep (Option.value_exn res.absolute).source
+                    )
                 | Apply app -> 
                     expr app.fn;
                     List.iter app.args ~f:expr
@@ -422,11 +423,12 @@ module JsBackend = struct
                     Option.iter t.else_ ~f:block
                 | Tuple t -> List.iter t.exprs ~f:expr
             in
-            let modu m = 
+            let rec modu m = 
                 List.iter Module.(m.entries) ~f:(function
                 | Module.Binding b -> block b.block
                 | Module.Import im -> 
                     add_dep im.resolved_source
+                | Module.Module m -> modu m
             ) 
             in modu root; !order
         in 
@@ -444,11 +446,13 @@ module JsBackend = struct
         in let nodes = List.map deps ~f: (fun (name, var_name) -> const var_name (`Expr (Js.Ast.Expr.Apply (require name)))) in
         (nodes, deps)
 
-    let write_export backend export = 
-        Map.iteri Typed.Symbol.Module.(export.bindings) ~f:(fun ~key ~data ->
+    (* let write_exposed backend exposed = 
+        Map.iteri exposed ~f:(fun ~key ~data ->
             (* If module exposes foreign stuff, it should be correctly re-exposed*)
-            Js.Ast.Printer.str ("exports." ^ (Js.Convert.ident_value key) ^ " = " ^ Js.Convert.ident_value data.internal.name ^ "\n") backend.printer;
-        )
+            match Typed.Symbol.Module.(data.binding) with
+            | None -> ()
+            | Some b -> Js.Ast.Printer.str ("exports." ^ (Js.Convert.ident_value key) ^ " = " ^ Js.Convert.ident_value b.id.name ^ "\n") backend.printer;
+        ) *)
 
     let write_bindings backend source content = 
         let open Js.Ast.Printer in
@@ -458,7 +462,7 @@ module JsBackend = struct
             str module_trailer
         ] backend.printer
 
-    let write_module ~bindings backend source node export =
+    let write_source ~bindings backend source node =
         let foreign_bindings = (match bindings with
         | Some (content, bindings_source) -> 
             write_bindings backend bindings_source content;
@@ -469,15 +473,11 @@ module JsBackend = struct
             source=source;
             required_sources = Map.of_alist_exn(module String) mapping;
         } in
-        let body = Typed.Node.Module.(node.entries) |> List.filter_map ~f:(function
-            | Typed.Node.Module.Import _ -> None
-            | Typed.Node.Module.Binding node -> Some 
-                (Js.Convert.let_ ~ctx node)
-        ) in
+        let body = Js.Convert.root_module ~ctx node in
         Js.Ast.Printer.str (module_header source) backend.printer;
         List.iter requires ~f: (fun require -> Js.Ast.Prn.const require backend.printer);
-        List.iter body ~f: (fun node -> Js.Ast.Prn.const node backend.printer);
-        write_export backend export;
+        List.iter body ~f: (fun node -> Js.Ast.Prn.stmt node backend.printer);
+        (* write_exposed backend node.exposed; *)
         Js.Ast.Printer.str module_trailer backend.printer;
         Js.Ast.Printer.str "\n" backend.printer
     
@@ -492,7 +492,7 @@ end
 
 let make ~fs in_ out = 
     let backend = JsBackend.start ~config: JsBackend.{fs} (Frontend.source_path (Fs.(fs.cwd) ()) in_) in 
-    match Frontend.run ~config: Frontend.{fs} ~callback: (fun {source; root; export} ->
+    match Frontend.run ~config: Frontend.{fs} ~callback: (fun {source; root} ->
         let foreign_source = (Caml.Filename.remove_extension source) ^ ".js" in
         let bindings = match Caml.Sys.file_exists foreign_source with
             | true -> (match File.read foreign_source with 
@@ -503,7 +503,8 @@ let make ~fs in_ out =
         in
         (* strip path / filename without ext *)
         (* does $filename.js file exist. if so, read it and attach *)
-        JsBackend.write_module ~bindings backend source root export
+        Common.log[Pp.to_string [Typed.Node.Module.pretty_print root]];
+        JsBackend.write_source ~bindings backend source root 
     ) in_ with
     | Ok _ ->
         JsBackend.commit backend out;

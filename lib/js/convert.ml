@@ -32,8 +32,11 @@ let operator_mappings = [
 let operators = operator_mappings |> List.map ~f:(fun (m, _) -> m)
 
 let is_operator str = 
-    let ch = String.get str 0 in 
-    List.find ~f:(fun n -> Char.equal n ch) operators |> Option.is_some
+    (match str with 
+        | "" -> false
+        | str -> let ch = String.get str 0 in 
+            List.find ~f:(fun n -> Char.equal n ch) operators |> Option.is_some
+    )
 
 let map_operator op = List.fold (String.to_list op) ~init: "" ~f: (fun result char -> 
     let mapped = List.find_map operator_mappings ~f: (fun (c, alias) -> 
@@ -58,23 +61,29 @@ type ctx = {
     required_sources: string StringMap.t
 }
 
+let resolve_ident ~ctx = function
+    | [] -> raise (Common.Unreachable)
+    | head :: rest -> 
+        let abs = Option.value_exn Typed.Symbol.Resolved.(head.absolute) in
+        let head_part = (match abs.source with
+            | "" -> ident_value abs.name
+            | source -> (match String.equal source ctx.source with
+                | true -> ident_value abs.name
+                | false -> 
+                    ((Map.find_exn ctx.required_sources source) ^ "." ^ (ident_value head.given))
+            )
+        ) in
+        (head_part :: (List.map rest ~f: (fun r -> ident_value r.given)) 
+            |> String.concat ~sep:".")
+
 let ident ~ctx n = 
-    let id = Option.value_exn Typed.Ident.(n.resolved) in
+    let id = Option.value_exn Typed.Ident.(n.resolved.absolute) in
     (*TODO: epic kludge. introduce foreigns asap  *)
     if String.equal id.name "println" then begin 
         Ast.Ident.{value = ident_value "println"}
     end
     else
-    let value = match id.source with
-    | "" -> ident_value id.name
-    | source -> 
-        if String.equal ctx.source source then 
-            ident_value id.name
-        else
-            match Map.find ctx.required_sources source with
-            | Some obj -> ident_value (obj ^ "." ^ id.name)
-            | None -> raise @@ Invalid_argument ("Source not found: " ^ (Typed.Symbol.Id.to_string id))
-    in Ast.Ident.{value}
+    Ast.Ident.{value = (resolve_ident ~ctx @@ n.resolution @ [n.resolved])}
 
 let basic b =
     if phys_equal Typed.Value.(b.type_) Typed.Base_types.str 
@@ -96,7 +105,7 @@ let rec apply ~ctx n = begin
     match Typed.Apply.(n.fn) with 
     | Typed.Expr.Ident m -> 
         (* TODO: !!FQN like!! import.value *)
-        let local_name = (Option.value_exn m.resolved).name in
+        let local_name = (Option.value_exn m.resolved.absolute).name in
         if not @@ is_js_operator local_name then
             apply_seq ~ctx (Ast.Expr.Ident (ident ~ctx m)) n.args
         else begin
@@ -179,11 +188,72 @@ and let_ ~ctx n =
             | _ -> Ast.Const.Block  (block ~ctx n.block.stmts))
         | params -> Ast.Const.Expr (lambda_like ~ctx params n.block)
     (* for nested modules we truncate module path*)
-    in Common.log[n.scope_name; ident_value n.scope_name; map_operator n.scope_name]; Ast.Const.{ name = ident_value n.scope_name; expr = const_expr }
+    in 
+    Ast.Const.{ name = ident_value n.scope_name; expr = const_expr }
 
+and modu_entries ~ctx entries = 
+    List.filter_map entries ~f: (function
+        | Typed.Node.Module.Import _ -> None
+        | Typed.Node.Module.Binding node -> 
+            Some (Ast.Block.Const (let_ ~ctx node))
+        | Typed.Node.Module.Module m -> Some (Ast.Block.Const (modu ~ctx m))
+    )
 
-let root_module root =
-    List.map Typed.Node.Module.(root.entries) ~f: (function
-        | Typed.Node.Module.Binding b -> let_ b
-        | _ -> raise Common.TODO
-    ) 
+and exposed_entries exposed = 
+    let entries = Map.to_alist exposed 
+    |> List.fold ~init: [] ~f:(fun acc (key, data) ->
+        let binding = (match Typed.Symbol.Module.(data.binding) with
+        | None -> []
+        | Some b -> 
+            [Ast.Object.Kv (key, Ast.Expr.Ident (Ast.Ident.{value = b.id.name}))])
+        in
+        let modu = (match Typed.Symbol.Module.(data.modu) with
+        | None -> []
+        | Some b -> 
+            [Ast.Object.Kv (key, Ast.Expr.Ident (Ast.Ident.{value = b.id.name}))])
+        in acc @ binding @ modu
+    ) in
+    Ast.Block.Return (Ast.Return.{expr = Ast.Expr.Object (Ast.Object.{entries})})
+
+and modu ~ctx n =
+    let exposed = exposed_entries n.exposed in
+    let modu = modu_entries ~ctx n.entries in
+    Ast.const_block Typed.Module.(n.scope_name) (modu @ [exposed])
+
+let module_exports ~ctx root = 
+    (Typed.Node.Module.(root.exposed)
+        |> Map.to_alist ~key_order: (`Increasing))
+    |> Util.Lists.flat_map ~f:(fun (name, entries) -> 
+        let binding = (match Typed.Symbol.Module.(entries.binding) with
+            | None -> [] 
+            | Some b -> 
+                [
+                    ([Typed.Symbol.Resolved.make name (Some b.id)] 
+                    |> resolve_ident ~ctx
+                    |> Ast.Ident.make
+                    |> Ast.Expr.ident
+                    |> Ast.Assign.make (Ast.Ident.make @@ "exports." ^ (ident_value name))
+                    |> Ast.Block.assign
+                    )
+                ]
+
+        ) in
+        let modu = (match Typed.Symbol.Module.(entries.modu) with
+            | None -> [] 
+            | Some b -> 
+                [
+                    ([Typed.Symbol.Resolved.make name (Some b.id)] 
+                    |> resolve_ident ~ctx
+                    |> Ast.Ident.make
+                    |> Ast.Expr.ident
+                    |> Ast.Assign.make (Ast.Ident.make @@ "exports." ^ (ident_value name))
+                    |> Ast.Block.assign
+                    )
+                ]
+
+        ) in modu @ binding
+    )
+
+let root_module ~ctx root = 
+    modu_entries ~ctx (Typed.Node.Module.(root.entries)) 
+        @ (module_exports ~ctx root)

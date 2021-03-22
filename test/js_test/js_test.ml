@@ -9,11 +9,10 @@ let run cmds =
     Core.In_channel.close inp; 
     r
 
-let execute code = 
-    let memfs = Make.Fs.mem () in
+let execute files main = 
+    let memfs = Make.Fs.mem files in
     (*TODO: proper path join / split*)
-    memfs.write "/src.le" code;
-    match Make.make ~fs:memfs "/src.le" "dst.js" with
+    match Make.make ~fs:memfs main "dst.js" with
     | Ok () -> 
         (* TODO: cleanup, unique tmp file name *)
         (* TODO: cleanup *)
@@ -28,11 +27,12 @@ module EndToEnd = struct
     type test = {
         name: string;
         expect: string;
-        code: string
+        files: (string * string) list;
+        main: string
     }
 
     let alcotest case () =
-        match execute case.code with
+        match execute case.files case.main with
         | Error (Make.NotFound n) -> 
             Alcotest.fail (n ^ " not found")
                 |> ignore
@@ -61,13 +61,16 @@ let sigs = EndToEnd.define "sigs" [
     {
         name = "working";
         expect = "hello";
-        code = {|
-            sig Str -> Str 
-            let f x = x
-            let main = {
-                println (f "hello")
-            }
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                sig Str -> Str 
+                let f x = x
+                let main = {
+                    println (f "hello")
+                }
+            |}
+        ]
     }
 ]
 
@@ -79,135 +82,259 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "multiple";
         expect = "a\nb\nc";
-        code = {|
-            // comment
-            let fn a = if a > 0 then "a" else if a < 0 then "b" else "c"
-            let main = {
-                let a = fn 1
-                println a
-                let b = fn (-1)
-                println b
-                let c = fn 0
-                println c
-            }
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn a = if a > 0 then "a" else if a < 0 then "b" else "c"
+                let main = {
+                    let a = fn 1
+                    println a
+                    let b = fn (-1)
+                    println b
+                    let c = fn 0
+                    println c
+                }
+            |}
+        ]
     };
     (* move into "operators" *)
     {
         name = "allows moving |> and $ to the next line";
         expect = "42";
-        code = {|
-            let (|>) x f = f x 
-            let ($) f x = f x
-            let add a b = a + b
-            let main = add 2 
-                $ 40 
-                |> println
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let (|>) x f = f x 
+                let ($) f x = f x
+                let add a b = a + b
+                let main = add 2 
+                    $ 40 
+                    |> println
+            |}
+        ]
     };
     {
         name = "specifies a custom operator";
         expect = "42";
-        code = {|
-            let (|>) x f = f x 
-            let main = 42 |> println
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let (|>) x f = f x 
+                let main = 42 |> println
+            |}
+        ]
     };
     (* move into "idens" *)
     {
         name = "translates non-ident js symbols";
         expect = "42";
-        code = {|
-            let __should'run'' = 42
-            let main = println __should'run''
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let __should'run'' = 42
+                let main = println __should'run''
+            |}
+        ]
     };
     (* move into "if" *)
     {
         name = "comparison";
         expect = "more\nless\nequal";
-        code = {|
-            let if_chain n = if n > 0 then "more" else if n < 0 then "less" else "equal"
-            let main = {
-                println (if_chain 1)
-                println (if_chain (-1))
-                println (if_chain 0)
-            }
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let if_chain n = if n > 0 then "more" else if n < 0 then "less" else "equal"
+                let main = {
+                    println (if_chain 1)
+                    println (if_chain (-1))
+                    println (if_chain 0)
+                }
+            |}
+        ]
     };
     (* move into "exprs" *)
     {
         name = "factorial";
         expect = "720";
-        code = {|
-            let rec fact n = 
-                if n > 1 then 
-                    n * (fact (n - 1)) 
-                else 
-                    1
-            let main = println (fact 6)
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let rec fact n = 
+                    if n > 1 then 
+                        n * (fact (n - 1)) 
+                    else 
+                        1
+                let main = println (fact 6)
+            |}
+        ]
     };
 
     (* todo: move out into "parens" tests *)
     {
         name = "js is precedence-aware when it puts parens";
         expect = "189";
-        code = {|
-            let main = println ((1 + 2) * (3 + 4) * (4 + 5))
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = println ((1 + 2) * (3 + 4) * (4 + 5))
+            |}
+        ]
     };
     {
         name = "parses multiple parens correctly";
         expect = "triple_parens";
-        code = {|
-            let main = println ((("triple_parens")))
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = println ((("triple_parens")))
+            |}
+        ]
     };
     (* 123123 *)
     {
         name = "test";
         expect = "hello, world";
-        code = {|
-            let main = println "hello, world"
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = println "hello, world"
+            |}
+        ]
     };
     {
         name = "lambda with multiple arguments";
         expect = "42";
-        code = {|
-            let main = \a b {let c = a + b; println c} 2 40
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = \a b {let c = a + b; println c} 2 40
+            |}
+        ]
     };
     {
         name = "lambda that calls lambda";
         expect = "42";
-        code = {|
-            let main = \a b {let c = a b; println c} \a {2 + a} 40 
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = \a b {let c = a b; println c} \a {2 + a} 40 
+            |}
+        ]
     };
     {
         name = "let-fn";
         expect = "42";
-        code = {|
-            let myfn a b = a + b
-            let main = {let a = myfn 40 2; println a}
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let myfn a b = a + b
+                let main = {let a = myfn 40 2; println a}
+            |}
+        ]
     };
     (* TODO: move elsewhere into lists *)
     {
         name = "simple lists";
         expect = "[ 1, 2, 3 ]";
-        code = {|
-            let main = println [1; 2; 3]
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = println [1; 2; 3]
+            |}
+        ]
     };
     {
         name = "simple tuples";
         expect = "[ 1, 2, 3 ]";
-        code = {|
-            let main = println (1, 2, 3)
-        |}
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = println (1, 2, 3)
+            |}
+        ]
+    };
+]
+
+let modules = EndToEnd.define "modules" [
+    {
+        name = "simple module";
+        expect = "42";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                module Test = {
+                    let answer = 42
+                }
+                let main = println Test.answer
+            |}
+        ]
+    };
+    {
+        name = "nested module";
+        expect = "42";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                module Test = {
+                    module Nested = {
+                        module Deep = {
+                            let answer = 42
+                        }
+                    }
+                }
+                let main = println Test.Nested.Deep.answer
+            |}
+        ]
+    };
+    {
+        name = "shadowed module";
+        expect = "42";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                module Test = {
+                    let answer = 100
+                }
+                module Test = {
+                    let answer = 42
+                }
+                let main = println Test.answer
+            |}
+        ]
+    };
+    {
+        name = "shadowed module 2";
+        expect = "42";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                module Test = {
+                    let answer = 42
+                }
+                module Test = {
+                    let answer = 100
+                    let answer = Test.answer
+                }
+                let main = println Test.answer
+            |}
+        ]
+    };
+    {
+        name = "using modules";
+        expect = "42";
+        main = "main.le";
+        files = [
+            "/other.le", {|
+                module Test = {
+                    let answer = 42
+                }
+            |};
+            "/main.le", {|
+                import "./other.le" { Test }
+                let main = println Test.answer
+            |}
+        ]
     };
     (* language fetaures *)
     (* {
@@ -221,4 +348,4 @@ let lambdas = EndToEnd.define "lambdas" [
     }; *)
 ]
 
-let tests = [sigs; lambdas] 
+let tests = [sigs; lambdas; modules] 

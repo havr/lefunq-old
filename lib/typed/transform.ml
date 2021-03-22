@@ -68,12 +68,19 @@ and value = function
     | Ast.Node.Value.Int int -> Expr.Value (Value.{range = int.range; value = int.value; type_ = Base_types.int})
     | Ast.Node.Value.Str str -> Expr.Value (Value.{range = str.range; value = str.value; type_ = Base_types.str})
     (* TODO: return AST without parlex pos *)
-    | Ast.Node.Value.Ident id -> Expr.Ident (Ident.{
-        given_name = id.value;
-        range = id.range;
-        resolved = None;
-        scheme = None;
-    })
+    | Ast.Node.Value.Ident id -> 
+        let (resolved, resolution) = (match id.value
+        |> String.split ~on: '.' 
+        |> List.map ~f: (fun value -> Symbol.Resolved.make value None)
+        |> List.rev with
+        | resolved :: resolution -> (resolved, List.rev resolution)
+        | [] -> raise Common.Unreachable
+        ) in Expr.Ident (Ident.{
+            range = id.range;
+            scheme = None;
+            resolved;
+            resolution;
+        })
     | Ast.Node.Value.Tuple tu ->
         Expr.Tuple (Tuple.{
             range = tu.range;
@@ -135,4 +142,23 @@ and binding n =
         sigt = Option.map ~f:(typ) n.sig';
         params = params;
         result = Type.Unknown
+    }
+and modu_entries entries = List.map entries ~f: (function
+    | Ast.Node.Module.Module m -> Module.Module (modu m)
+    | Ast.Node.Module.Let t -> Module.Binding (binding t)
+    | Ast.Node.Module.Import i -> Module.Import (import i)
+)
+and modu m = 
+    let entries = modu_entries Ast.Node.Module.(m.entries) in Module.{
+        given_name = m.name.value;
+        scope_name = "";
+        entries;
+        exposed = Map.empty(module String)
+    }
+and root m = 
+    let entries = modu_entries Ast.Node.Root.(m.entries) in Module.{
+        given_name = "";
+        scope_name = ""; 
+        entries;
+        exposed = Map.empty(module String)
     }

@@ -37,8 +37,8 @@ let value_stmt value typ = Stmt.Expr (
 let local_ident_stmt ?scope_name ?scheme name = 
     let ident = Ident.{
         range = Common.Span.empty_range;
-        given_name = name;
-        resolved = Some (Typed.Symbol.Id.make "" @@ Option.value ~default:name scope_name);
+        resolved = Symbol.Resolved.make name @@ Some (Typed.Symbol.Id.make "" [] @@ Option.value ~default:name scope_name);
+        resolution = [];
         scheme = scheme
     } in Stmt.Expr (Expr.Ident ident)
 
