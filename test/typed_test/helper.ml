@@ -54,3 +54,15 @@ let lambda_stmt params stmts =
         block = Typed.Block.{stmts; range = Common.Span.empty_range}
       }
     in Typed.Stmt.Expr (Typed.Expr.Lambda lambda)
+
+
+
+(* TODO: move to Util.Lists ? *)
+let difference ~equals src check = 
+  List.fold src ~init: ([]) ~f: (fun a x ->
+    match List.find check ~f: (equals x) with
+    | Some _ -> a
+    | None -> x :: a
+  )
+
+let simple name = Typed.Type.Simple (name, [])

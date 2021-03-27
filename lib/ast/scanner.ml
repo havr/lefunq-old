@@ -59,6 +59,8 @@ let defs = [
         char "=");
     ((fun _ -> Semi), 
         oneMore @@ char ";");
+    ((fun _ -> Pipe), 
+        char "|");
     ((fun _ -> OpenBlock), 
         char "{");
     ((fun _ -> FuncArrow), 
@@ -75,6 +77,10 @@ let defs = [
         char "]");
     ((fun _ -> Coma), 
         char ",");
+    ((fun _ -> Spread), 
+        str "..");
+    ((fun _ -> Match), 
+        str "?");
     ((fun _ -> Lambda), 
         char "\\");
     ((fun op -> Op op),

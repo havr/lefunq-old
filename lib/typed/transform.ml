@@ -117,6 +117,32 @@ and expr: Ast.Node.Expr.t -> Node.Expr.t = function
     | Ast.Node.Expr.Value v -> value v
     | Ast.Node.Expr.Apply app -> Expr.Apply (apply app)
     | Ast.Node.Expr.Cond n -> Expr.Cond (cond n)
+    | Ast.Node.Expr.Match m -> Expr.Match (matc m)
+
+and matc n = 
+    let rec pattern = function
+        | AstNode.Match.Int i -> TyNode.Match.Int i.value
+        | AstNode.Match.Str s -> TyNode.Match.Str s.value
+        | AstNode.Match.Param p -> TyNode.Match.Param {
+            given_name = p.value;
+            scope_name = p.value;
+            typ = Type.Unknown;
+        }
+        | AstNode.Match.Tuple tup -> TyNode.Match.Tuple (List.map tup ~f:pattern)
+        | AstNode.Match.List li -> TyNode.Match.List {
+            items = (List.map li.items ~f:pattern);
+            rest = Option.map ~f: pattern li.rest;
+            item_typ = Type.Unknown;
+        } 
+    in
+    let cases = List.map AstNode.Match.(n.block.cases) ~f:(fun case ->
+        TyNode.Match.{
+            pattern = pattern case.pattern;
+            stmts = List.map case.stmts ~f:block_stmt
+        }
+    ) in TyNode.Match.{
+        range = n.range; typ = Type.Unknown; cases; expr = expr n.expr
+    }
 and block_stmt = function
     | Ast.Node.Block.Expr e -> Stmt.Expr (expr e)
     | Ast.Node.Block.Block b -> Stmt.Block (block b)

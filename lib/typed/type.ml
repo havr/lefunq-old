@@ -29,9 +29,16 @@ in make_scheme constr (make_typ args)
 
 let rec to_string = function
 | Unit -> "()"
-| Unknown -> "???"
+| Unknown -> "<unknown>"
 | Var v -> "?" ^ v
-| Simple (v, params) -> "%s %s" %% [v; params |> List.map ~f: to_string |> String.concat ~sep: " "]
+| Simple (v, params) -> 
+    let str_params = (match params with 
+    | [] -> "" 
+    | params -> params 
+        |> List.map ~f: to_string 
+        |> String.concat ~sep: " "
+        |> (^) " "
+    ) in v ^ str_params
 | Tuple vs ->
     let concat = List.map vs ~f:to_string 
     |> String.concat ~sep: ", " in
@@ -69,7 +76,8 @@ let rec equals a b = match (a, b) with
     else false
 | (Lambda (ah, at), Lambda (bh, bt)) ->
     equals ah bh && equals at bt
-| _ -> false
+| Unit, Unit -> true
+| _, _ -> false
 
 let rec free_vars = function
 | Unit -> Set.empty (module String)

@@ -376,8 +376,9 @@ end *)
 end *)
 
 let tests = [
-    ("Ast:ident", Ident.tests);
-    ("Ast:tuple", Tuple.tests);
-    ("Ast:module", Ast_test__module.tests);
-    ("Ast:list", Li.tests)
+    ("ast:ident", Ident.tests);
+    ("ast:tuple", Tuple.tests);
+    ("ast:module", Ast_test__module.tests);
+    ("ast:match", Ast_test__match.tests);
+    ("ast:list", Li.tests)
   ]

@@ -320,6 +320,7 @@ module Parser(Lexeme: LEXEME) = struct
         | Error e -> Error e
     }
 
+    let wrap_fn fn = {fn = fun state -> (fn ()).fn state}
     module Infix = struct 
         let (>>=) = bind
     end

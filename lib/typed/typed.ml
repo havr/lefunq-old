@@ -53,22 +53,33 @@ module Subst = struct
         Map.fold other ~init: base ~f:(fun ~key ~data result -> Map.set result ~key ~data)
 
     let rec apply_substs substs = function
-    | Type.Var v -> begin match Map.find substs v with 
-        | Some t -> t
-        | None -> Type.Var v
-    end
-    | Type.Lambda (from, to') ->
-        Type.Lambda (apply_substs substs from, apply_substs substs to')
+    | Type.Var v -> Map.find substs v |> Option.value ~default: (Type.Var v) 
+    | Type.Simple (s, args) -> Type.Simple (s, List.map ~f:(apply_substs substs) args)
+    | Type.Lambda (from, to') -> Type.Lambda (apply_substs substs from, apply_substs substs to')
     | Type.Tuple t -> Type.Tuple (List.map t ~f:(apply_substs substs))
-    | s -> s
+    | Type.Unknown -> Type.Unknown
+    | Type.Unit -> Type.Unit
 
-    let apply_substs_to_substs target substs = Map.map target ~f: (fun v ->
-        apply_substs substs v
-    )
+    let apply_substs_to_substs target substs = 
+        Map.map target ~f: (fun v -> apply_substs substs v)
 
     let combine_substs base other =
-        let applied = apply_substs_to_substs other base in
-        concat_substs base applied
+        concat_substs base (apply_substs_to_substs other base) 
+
+    let rec apply_to_pattern substs = function
+        | Match.Any -> Match.Any
+        | Match.Unit -> Match.Unit
+        | Match.Str s -> Match.Str s
+        | Match.Int i  -> Match.Int i
+        | Match.Param p -> Match.Param {
+            p with typ = apply_substs substs p.typ
+        }
+        | Match.Tuple t -> Match.Tuple (List.map t ~f: (apply_to_pattern substs));
+        | Match.List li -> Match.List {
+            items = List.map li.items ~f: (apply_to_pattern substs);
+            rest = li.rest; (* TODO: apply substs to rest! *)
+            item_typ = apply_substs substs li.item_typ;
+        }
 
     let apply_substs_to_params substs params = 
         let rec apply_param param = 
@@ -111,16 +122,26 @@ module Subst = struct
             ) in
             let else_ = Option.map c.else_ ~f:(apply_substs_to_block substs) in
             Expr.Cond Cond.{c with cases; else_}
+        | Expr.Match m -> Expr.Match { m with 
+                expr = apply_substs_to_expr substs m.expr;
+                cases = List.map m.cases ~f: (fun case -> Match.{ 
+                    stmts = apply_substs_to_block_stmts substs case.stmts;
+                    pattern = apply_to_pattern substs case.pattern
+                })
+            }
 
-    and apply_substs_to_block substs b =  
-        let stmts = List.map Block.(b.stmts) ~f: (function 
-            | Stmt.Block b -> Stmt.Block (apply_substs_to_block substs b)
+
+    and apply_substs_to_block_stmts substs stmts =  
+         List.map stmts ~f: (function 
+            | Stmt.Block b -> Stmt.Block {b with stmts = apply_substs_to_block_stmts substs b.stmts}
             | Stmt.Expr e -> Stmt.Expr (apply_substs_to_expr substs e)
             | Stmt.Let b -> 
                 let scheme = Option.map b.scheme ~f:(apply_substs_to_scheme substs) in
                 let block = apply_substs_to_block substs b.block in
                 Stmt.Let {b with scheme; block }
-        ) in Block.{b with stmts}
+        )
+    and apply_substs_to_block substs b =
+         {b with stmts = apply_substs_to_block_stmts substs b.stmts}
 
     let apply_to_error substs err = 
     match err with
@@ -152,7 +173,22 @@ module Subst = struct
         unexpected = apply_substs substs unexpected;
         expected = apply_substs substs expected;
     }
-    | t -> t
+    | PatternMismatch t -> PatternMismatch {
+        t with 
+            expected = apply_substs substs t.expected;
+            unexpected = apply_substs substs t.unexpected
+    } 
+    | ListItemTypeMismatch t -> ListItemTypeMismatch {
+        t with 
+            expected = apply_substs substs t.expected;
+            unexpected = apply_substs substs t.unexpected
+    } 
+    | UndeclaredIdentifier t -> UndeclaredIdentifier t
+    | CyclicDependency t -> CyclicDependency t
+    | SourceNotFound t -> SourceNotFound t
+    | SourceSymbolNotFound t -> SourceSymbolNotFound t
+    | SourceSystemError t -> SourceSystemError t
+    | SourceCompileError t -> SourceCompileError t
 
 end
 
@@ -186,53 +222,51 @@ module Infer = struct
     let unify ta tb = 
         let errors = ref [] in
         let rec unify' substs ta tb = 
+            let unify_lists a b =
+                List.fold (List.zip_exn a b) ~init: Subst.empty_subst ~f: (fun result (ia, ib) -> 
+                    let unified = unify' result ia ib in 
+                    Subst.combine_substs result unified)
+            in
             let mismatch () = 
-                errors := TypeMismatch {
+                let err = TypeMismatch {
                     type_expected = ta;
                     type_provided = tb;
                     range = Span.empty_range
-                } :: !errors
-            in
-            match (ta, tb) with
-            | (Type.Var va, _) -> 
-                Subst.new_subst va tb
-            | (_, Type.Var vb) -> 
-                Subst.new_subst vb ta 
-            | (Type.Simple _, Type.Simple _) ->
-                if not @@ Type.equals ta tb then begin 
-                    mismatch()
-                end;
+                } in
+                errors := !errors @ [err];
                 Subst.empty_subst
-            | (Type.Tuple tua, Type.Tuple tub) ->
-                if List.length tua <> List.length tub then begin
-                    mismatch ();
-                    Subst.empty_subst
-                end else begin 
-                    List.fold (List.zip_exn tua tub) ~init: Subst.empty_subst ~f: (fun result (ia, ib) -> 
-                        let unified = unify' result ia ib in 
-                        Subst.combine_substs result unified
-                    )
-                end
-            | (Type.Lambda (ha, ra), Type.Lambda (hb, rb)) -> begin
+            in
+            match ta, tb with
+            | Type.Var va, _ -> 
+                Subst.new_subst va tb
+            | _, Type.Var vb -> 
+                Subst.new_subst vb ta 
+            | Type.Simple (a, ap), Type.Simple (b, bp) -> 
+                (match String.equal a b with
+                | false -> mismatch ()
+                | true -> unify_lists ap bp)
+            | Type.Tuple tua, Type.Tuple tub ->
+                (match List.length tua = List.length tub with
+                | false -> mismatch ()
+                | true -> unify_lists tua tub)
+            | (Type.Lambda (ha, ra), Type.Lambda (hb, rb)) -> (
                 let unified = unify' substs ha hb in 
                 let combined = Subst.combine_substs substs unified in
-                unify' combined (Subst.apply_substs combined ra) (Subst.apply_substs combined rb)
-            end
-            | _ -> 
-                mismatch ();
-                Subst.empty_subst
+                unify' combined (Subst.apply_substs combined ra) (Subst.apply_substs combined rb))
+            | Type.Unit, Type.Unit -> Subst.empty_subst
+            | _ -> mismatch ();
         in let result = unify' (Subst.empty_subst) ta tb  in
         (result, (!errors))
 
     let type_mismatch_from = List.map ~f: (fun (expect, got) -> 
         TypeMismatch{type_expected = expect; type_provided = got; range = Span.empty_range})
 
-
     let unify_ctx ~ctx base new' = 
-        let (substs', errors) = unify base new' in
-        ctx.substs <- Subst.combine_substs ctx.substs substs';
+        let (substs', errors) = unify (Subst.apply_substs ctx.substs base) (Subst.apply_substs ctx.substs new') in
+        ctx.substs <- Subst.combine_substs (*ctx.substs*) substs' ctx.substs;
         errors
-
+        (* let (substs', errors) = unify (Subst.apply_substs ctx.substs base) (Subst.apply_substs ctx.substs new') in
+        ctx.substs <- Subst.combine_substs (*ctx.substs*) substs' ctx.substs; *)
     let set_env ~ctx name scheme = 
         ctx.env <- Map.set ctx.env ~key:name ~data:scheme
 
@@ -293,7 +327,7 @@ module Infer = struct
         | None -> 
             Base_types.unit
 
-    and block ~ctx block =
+    and block_stmts ~ctx stmts =
         let result_stmt ~ctx = function
             | Stmt.Expr e -> expr ~ctx e 
             | _ -> raise Common.TODO
@@ -320,7 +354,9 @@ module Infer = struct
             ignore @@ intern_stmt ~ctx stmt;
             infer_stmt ~ctx rest
         in
-            infer_stmt ~ctx Block.(block.stmts)
+            infer_stmt ~ctx stmts
+
+    and block ~ctx block = block_stmts ~ctx Block.(block.stmts)
 
     and lambda ~ctx lam =
         (* here all args are either untyped or have resolved values (or errors???)*)
@@ -454,16 +490,18 @@ module Infer = struct
             let first_t = expr ~ctx first in
             let _ = List.map rest ~f: (fun e ->
                 let t = expr ~ctx e in
+                (* TODO: make a generic function to skip errors *)
                 let errors = unify_ctx ~ctx first_t t in
                 (if List.length errors > 0 then (
                     ctx_add_errors ~ctx [
-                        ListItemTypeMismatch {
+                        BranchTypeMismatch {
                             range = Expr.range e;
                             expected = first_t;
                             unexpected = t;
                         }
                     ]
                 ));
+
                 first_t
             ) in Base_types.list (first_t)
     and expr ~ctx = function
@@ -474,7 +512,72 @@ module Infer = struct
         | Expr.Apply m -> apply_expr ~ctx m
         | Expr.Cond c -> cond ~ctx c
         | Expr.Foreign _ -> (ctx.tempvar ())
-        | Expr.Li l -> Common.log["123"]; list ~ctx l
+        | Expr.Match m -> matc ~ctx m
+        | Expr.Li l -> list ~ctx l
+    and matc ~ctx m =
+        let typ = expr ~ctx Match.(m.expr) in
+        let unify_pattern typ pat =
+            let must_unify expect_typ pattern = 
+                let pattern_typ = Match.pattern_to_type pattern in
+                (* Common.log["unify pattern"; Type.to_string pattern_typ; Type.to_string expect_typ]; *)
+                match unify_ctx ~ctx expect_typ pattern_typ with
+                | [] -> 
+                    (* Common.log["substs after"; Subst.substs_to_string ctx.substs]; *)
+                    ()
+                | _ -> 
+                    Common.log["--"; Type.to_string expect_typ; Type.to_string pattern_typ];
+                    ctx.errors <- ctx.errors @ [
+                        PatternMismatch {expected = expect_typ; unexpected = pattern_typ; range = Span.empty_range}
+                    ]
+            in
+            let rec unify_structs = function
+                | Match.List li -> 
+                    List.iter li.items ~f: (fun item -> 
+                        unify_structs item;
+                        Common.log["must unify"; Type.to_string li.item_typ; item |> Match.pattern_to_type |> Type.to_string];
+                        must_unify li.item_typ item;
+                    );
+                    Option.iter li.rest ~f: (fun rest -> 
+                        Common.log["hello"];
+                        unify_structs rest;
+                        must_unify (Base_types.list (li.item_typ)) rest;
+                    )
+                | Match.Tuple tu -> List.iter tu ~f: unify_structs
+                | _ -> ()
+            in
+            let unify_pattern' typ pat = match (pat, typ) with
+            | Match.Any, _ -> ()
+            | p, t -> must_unify t p
+            in (unify_structs pat; unify_pattern' typ pat)
+        in
+        (* TODO: assert list types *)
+        let (result, _) = List.fold m.cases ~init: (Type.Unknown, typ) ~f: (fun (result, typ) case ->
+            unify_pattern typ case.pattern;
+            Common.log["unified"; Type.to_string @@ (apply_substs ~ctx @@ Match.pattern_to_type case.pattern)];
+            Common.log["substs"; Subst.substs_to_string ctx.substs];
+            Common.log["case"; [(Expr.Match m) |> Subst.apply_substs_to_expr ctx.substs |> Expr.pretty_print] |> Pp.to_string];
+            (* TODO:  *)
+            let case_result = block_stmts ~ctx case.stmts in
+            let result' = match result with
+            | Type.Unknown -> case_result
+            | t -> 
+                let errors = unify_ctx ~ctx result t in
+                (if List.length errors > 0 then (
+                    ctx_add_errors ~ctx [
+                        BranchTypeMismatch {
+                            range = Stmt.range (List.last_exn case.stmts);
+                            expected = result;
+                            unexpected = t;
+                        }
+                    ]
+                ));
+                t
+            in
+            (result', typ)
+        ) in 
+        (* TODO: check if all branches work properly *)
+        result
+
 end
 
 (* TODO: better name *)
@@ -512,7 +615,6 @@ module Global = struct
         let resolve_errors = ctx.errors in
         let infer_errors = infer_ctx.errors in
         let errors = List.map (resolve_errors @ result_errors @ infer_errors) ~f:(Subst.apply_to_error infer_ctx.substs) in
-        Common.log["xxx"; List.length errors |> Int.to_string; Pp.to_string [typed_node |> Node.Let.pretty_print]];
         (typed_node, errors)
     
     let expose modu_id entries = 

@@ -87,20 +87,29 @@ module Arg = struct
         | Ident of ident
         | Tuple of tuple
     type args = {args: arg list}
+
+    let rec pretty_print_arg = function
+        | Ident id -> Pp.(branch [text "IDENT"; text id.ident] [])
+        | Tuple tup -> Pp.(branch [text "TUPLE"] (List.map ~f:pretty_print_arg tup.tuple))
 end
 module Unit = struct
     type t = unit Span.t
+    let pretty_print _ = Pp.(branch [text "()"] [])
 end
 
 module rec Int: sig 
     type t = string Span.t
+    val pretty_print: t -> Pp.branch
 end = struct 
     type t = string Span.t
+    let pretty_print n = Pp.(branch [text "INT"; spanned n] [])
 end
 and Str: sig
     type t = string Span.t
+    val pretty_print: t -> Pp.branch
 end = struct 
     type t = string Span.t
+    let pretty_print n = Pp.(branch [text "STR"; spanned n] [])
 end
 and Foreign: sig
     type t = string Span.t
@@ -125,12 +134,18 @@ and Lambda: sig
         block: Block.t
     }
 
+    val pretty_print: t -> Pp.branch
 end = struct 
     type t = {
         range: Span.range;
         args: Arg.args;
         block: Block.t
     }
+
+    let pretty_print n = Pp.(branch [text "LAMBDA"] [
+        branch [text "ARGS"] (List.map n.args.args ~f: Arg.pretty_print_arg);
+        (Block.pretty_print n.block)
+    ])
 end
 and Let: sig
     type expr = 
@@ -178,16 +193,39 @@ and Block: sig
         range: Span.range;
         stmts: block_stmt list
     }
+
+
+    val pretty_print_stmt: block_stmt -> Pp.branch
+    val pretty_print: t -> Pp.branch
+    val make: ?range: Span.range -> block_stmt list -> t
+    val expr: Expr.t -> block_stmt
+
 end = struct 
     type block_stmt = 
         | Expr of Expr.t
         | Let of Let.t
         | Block of Block.t
 
+    let pretty_print_stmt = function
+        | Expr t -> Expr.pretty_print t
+        | Let t -> Let.pretty_print t
+        | Block t -> Block.pretty_print t
+
     type t = {
         range: Span.range;
         stmts: block_stmt list
     }
+
+    let expr e = Block.Expr e
+
+    let make ?range stmts = {
+        stmts;
+        range = match range with 
+        | Some m -> m 
+        | None -> Span.empty_range
+    }
+
+    let pretty_print n = Pp.(branch [text "BLOCK"] (n.stmts |> List.map ~f: pretty_print_stmt))
 end
 and Cond: sig
     type expr = 
@@ -216,7 +254,10 @@ and Apply: sig
 end = struct 
     type t = { fn: Expr.t; args: Expr.t list; range: Span.range }
 
-    let pretty_print _ = Pp.(branch [text "TODO: branch"] [])
+    let pretty_print app = Pp.(branch [text "APPLY"] [
+        branch [text "FN"] [Expr.pretty_print app.fn];
+        branch [text "ARGS"] (List.map ~f: Expr.pretty_print app.args)
+    ])
 end
 and Li: sig 
     type t = { range: Span.range; items: Expr.t list }
@@ -264,8 +305,16 @@ end = struct
         | Unit of Unit.t
         | Li of Li.t
 
-    let pretty_print _ = Pp.(branch [text "TODO: value"] [])
-
+    let pretty_print = function
+        | Int v -> Int.pretty_print v
+        | Str v -> Str.pretty_print v
+        | Foreign v -> Foreign.pretty_print v
+        | Ident v -> Ident.pretty_print v
+        | Lambda v -> Lambda.pretty_print v 
+        | Tuple v -> Tuple.pretty_print v
+        | Unit v -> Unit.pretty_print v
+        | Li v -> Li.pretty_print v
+    
     let range = function
     | Int i -> i.range
     | Str s -> s.range
@@ -281,6 +330,7 @@ and Expr: sig
         | Value of Value.t
         | Apply of Apply.t
         | Cond of Cond.t
+        | Match of Match.matc
 
     val range: Expr.t -> Span.range
     val pretty_print: t -> Pp.branch
@@ -289,16 +339,19 @@ end = struct
         | Value of Value.t
         | Apply of Apply.t
         | Cond of Cond.t
+        | Match of Match.matc
 
     let pretty_print = function
         | Value v -> Value.pretty_print v
         | Apply a -> Apply.pretty_print a
         | Cond c -> Cond.pretty_print c
+        | Match p -> Match.pretty_print_matc p
 
     let range = function
     | Value n -> Value.range n
     | Apply n -> n.range
     | Cond n -> n.range
+    | Match n -> n.range
 end
 and Module: sig
     type entry = Let of Let.t | Import of Import.t | Module of Module.t
@@ -328,6 +381,100 @@ end = struct
                 | Module m -> Module.pretty_print m
             )
         ))
+
+end
+and Match: sig 
+    type pattern = 
+        Param of string Span.t
+        | Int of string Span.t
+        | Str of string Span.t
+        | Tuple of pattern list
+        | List of {
+            items: pattern list;
+            rest: pattern option
+        }
+
+    val pretty_print_pattern: pattern -> Pp.branch 
+
+    type case = {
+        pattern: pattern;
+        stmts: Block.block_stmt list
+    }
+
+    val pretty_print_case: case -> Pp.branch 
+
+    type cases = {
+        range: Span.range;
+        cases: case list
+    }
+
+    val pretty_print_cases: cases -> Pp.branch 
+
+    type matc = {
+        range: Span.range;
+        expr: Expr.t;
+        block: cases;
+    }
+
+    val pretty_print_matc: matc -> Pp.branch
+end = struct 
+    type pattern = 
+        Param of string Span.t
+        | Int of string Span.t
+        | Str of string Span.t
+        | Tuple of pattern list
+        | List of {
+            items: pattern list;
+            rest: pattern option
+        }
+
+    let rec pretty_print_pattern = function 
+        | Param p -> Pp.(branch [text "PARAM"; text p.value] [])
+        | Int p -> Pp.(branch [text "INT"; text p.value] [])
+        | Str p -> Pp.(branch [text "STR"; text p.value] [])
+        | Tuple t -> Pp.(branch [text "TUPLE"] (t |> List.map ~f:pretty_print_pattern))
+        | List t -> 
+            let items = t.items 
+                |> List.map ~f:pretty_print_pattern
+            in
+            let rest = match t.rest with
+                | Some m -> [Pp.(branch [text ".."] [pretty_print_pattern m])]
+                | None -> []
+            in
+            Pp.(branch [text "LIST"] (items @ rest))
+
+    type case = {
+        pattern: pattern;
+        stmts: Block.block_stmt list
+    }
+
+    let pretty_print_case case = 
+        let sc = pretty_print_pattern case.pattern in
+        let bl = List.map ~f:Block.pretty_print_stmt case.stmts in
+        Pp.(branch [text "CASE"] [
+            sc;
+            Pp.(branch [text "BLOCK"] bl)
+        ])
+
+    type cases = {
+        range: Span.range;
+        cases: case list
+    }
+
+    let pretty_print_cases n = 
+        Pp.(branch [text "CASES"] (List.map ~f:pretty_print_case n.cases))
+
+    type matc = {
+        range: Span.range;
+        expr: Expr.t;
+        block: cases;
+    }
+
+    let pretty_print_matc m = 
+        Pp.(branch [text "MATCH"] [
+            branch [text "EXPR"] [Expr.pretty_print m.expr];
+            pretty_print_cases m.block
+        ])
 end
 
 module Root = struct 

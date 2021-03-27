@@ -4,6 +4,21 @@ open Common
 open Comb
 open Comb.Syntax
 
+
+(* TODO: move somewhare *)
+let forward_decl (type a) (type r) () = 
+    let fn: (a -> r) Option.t ref = ref None in
+    let setter value = 
+        match !fn with
+        | None -> fn := (Some value)
+        | Some _ -> raise (Invalid_argument "the value is initialized")
+    in let getter arg = 
+        match !fn with
+        | None -> raise (Invalid_argument "the forward value is not initialized")
+        | Some fn -> fn arg
+    in getter, setter
+
+
 exception Todo of string
 
 let make_state = State.make
@@ -49,6 +64,9 @@ module Lexemes = struct
     let func_arrow = match_map(function | FuncArrow -> Some () | _ -> None)
     let foreign = match_map(function | Foreign -> Some () | _ -> None)
     let modu = match_map(function | Module -> Some () | _ -> None)
+    let pipe = match_map(function | Pipe -> Some () | _ -> None)
+    let spread = match_map(function | Spread -> Some () | _ -> None)
+    let matc = match_map(function | Match -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -177,6 +195,8 @@ let merge_spanned fn = function
                 end' = (last_list_item rest).range.end'
             }
         }
+
+let (pattern_block: unit -> Node.Match.cases Comb.t), set_pattern_block = forward_decl ()
 
 let type' =
     let rec typ' () = choicef [
@@ -341,7 +361,7 @@ and fn_arg () =
     let parens () = 
         let+ open_paren = Lexemes.open_paren 
         and+ expr = maybe @@ (tuple_expr ())
-        and+ close_paren = expect @@ Lexemes.close_paren in
+        and+ close_paren = expect @@ ignore_newline @@ Lexemes.close_paren in
         match expr with
         | None -> Node.Expr.Value (Node.Value.Unit (Span.merged open_paren.range close_paren.range ()))
         | Some v -> v
@@ -363,6 +383,7 @@ and fn () =
             args = some;
             range = Span.merge (Node.Expr.range cell) (Node.Expr.range (List.last_exn some))
         }
+
 and list () = 
     let semi = 
         let+ _ = maybe newlines 
@@ -415,7 +436,20 @@ and unary () =
     in
     let+ ops = many 
         @@ Lexemes.operator_of ["-"]
-    and+ ex = fn () in make ex ops
+    and+ ex  = fn()
+    and+ matc = maybe @@ (
+        let+ _ = Lexemes.matc
+        and+ block = ignore_newline @@ expect @@ pattern_block () in block
+    ) in
+    let expr = make ex ops in
+    Common.log["expr is"; Pp.to_string [Node.Expr.pretty_print @@ expr]];
+    match matc with
+    | None -> expr
+    | Some cases -> Node.Expr.Match (Node.Match.{
+        expr;
+        range = Span.merge (Node.Expr.range expr) (cases.range);
+        block = cases
+    }) 
 and binary' = function
  | [] -> unary ()
  | precedence :: higher ->
@@ -453,8 +487,8 @@ and tuple_expr () =
         exprs = first :: last;
         range = Span.merge (Node.Expr.range first) (Node.Expr.range (List.last_exn last))
     })
-and expr () = 
-    let parens = 
+and expr () = tuple_expr ()
+    (* let parens = 
         let+ open_paren = Lexemes.open_paren 
         and+ expr = maybe @@ (tuple_expr ())
         and+ close_paren = expect @@ ignore_newline @@ Lexemes.close_paren in
@@ -464,7 +498,7 @@ and expr () =
     in 
     choice [ 
         parens; (tuple_expr());
-    ]
+    ] *)
 (* and tuple () =
     let+ op = Lexemes.open_paren 
     (* TODO: separated_by (,) *)
@@ -524,16 +558,18 @@ and block () =
         stmts=stmts
     }
 
-and block_stmts () = 
+and block_stmt () = 
     let block_stmt () = choicef [
         (fun () -> map (sig_()) (fun v -> Node.Block.Let v));
         (fun () -> map (let_()) (fun v -> Node.Block.Let v));
         (fun () -> map (block ()) (fun v -> Node.Block.Block v));
         (fun () -> map (expr ()) (fun v -> Node.Block.Expr v));
-    ] in let separated_block_stmt = 
+    ] in 
         let+ stmt = ignore_newline @@ (block_stmt ())
-        and+ _ = maybe @@ Lexemes.stmt_separator in stmt
-    in many Comb.{fn = separated_block_stmt.fn}
+        and+ _ = maybe @@ Lexemes.stmt_separator in 
+        stmt
+
+and block_stmts () = many (Comb.wrap_fn block_stmt)
 
 and lambda () =
     let+ start = Lexemes.lambda
@@ -556,6 +592,54 @@ and module_entries () =
         and+ _ = maybe @@ Lexemes.stmt_separator in
             stmt
     in many separated_block_stmt
+
+let () = set_pattern_block (fun () -> 
+    let open Node in
+    let param = map Lexemes.ident (fun id -> Match.Param id) in
+    let int = map Lexemes.int (fun id -> Match.Int id) in
+    let str = map Lexemes.str (fun id -> Match.Str id) in
+    let (parens: unit -> Match.pattern Comb.t), set_parens = forward_decl () in
+    let (elem: unit -> Match.pattern Comb.t), set_elem = forward_decl () in
+    let (tuple: unit -> Match.pattern Comb.t), set_tuple = forward_decl () in
+    let list = Comb.wrap_fn (fun () ->
+        let+ _ = Lexemes.open_bracket
+        and+ items = maybe @@ separated_by (ignore_newline @@ Lexemes.semi) (wrap_fn tuple)
+        and+ rest = maybe @@ ignore_newline @@ (
+            let+ _ = Lexemes.spread
+            and+ id = expect @@ param in id
+        )
+        and+ _ = expect @@ Lexemes.close_bracket in
+        Match.List { items = Option.value ~default: [] items; rest }
+    ) in
+    set_parens (fun () ->
+        let+ _ = Lexemes.open_paren
+        and+ e = expect @@ Comb.wrap_fn tuple
+        and+ _ = expect @@ Lexemes.close_paren in
+        e
+    );
+    set_elem (fun () ->
+        choice [param; int; str; list; parens ()]
+    );
+    set_tuple (fun () ->
+        let+ elems = separated_by (ignore_newline @@ Lexemes.coma) (ignore_newline @@ elem ()) in
+        match elems with
+        | [] -> raise (Common.TODO)
+        | only :: [] -> only
+        | multiple -> Match.Tuple multiple
+    );
+
+    let case = 
+        let+ _ = Lexemes.pipe
+        and+ pattern = expect @@ tuple ()
+        and+ _ = expect @@ Lexemes.func_arrow
+        and+ stmts = expect @@ one_more @@ (Comb.wrap_fn block_stmt) in 
+        Match.{pattern; stmts}
+    in
+    let+ op = Lexemes.open_block
+    and+ cases = expect @@ ignore_newline @@ one_more case
+    and+ cl = expect @@ ignore_newline @@ Lexemes.close_block in
+    Match.{range = Span.merge op.range cl.range; cases}
+)
 
 let () = init_modu (fun () ->
     let+ keyword = Lexemes.modu

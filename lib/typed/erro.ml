@@ -38,6 +38,10 @@ type t =
     source: string Span.t;
 } | SourceCompileError of {
     source: string Span.t;
+} | PatternMismatch of {
+    range: Span.range;
+    unexpected: Type.t;
+    expected: Type.t;
 }
 
 
@@ -76,6 +80,8 @@ let clear_range = function
     BranchTypeMismatch {unexpected=u; expected=e; range = Span.empty_range}
 | ListItemTypeMismatch {unexpected=u; expected=e; _} -> 
     ListItemTypeMismatch {unexpected=u; expected=e; range = Span.empty_range}
+| PatternMismatch {unexpected=u; expected=e; _} -> 
+    PatternMismatch {unexpected=u; expected=e; range = Span.empty_range}
 | SourceNotFound {source} -> 
     SourceNotFound {source = {source with range = Span.empty_range}}
 | SourceSymbolNotFound {source; symbol} -> 
@@ -101,6 +107,8 @@ let to_string = function
     concat ["If Type Mismtach:"; Span.range_str range; Type.to_string u]
 | BranchTypeMismatch {unexpected=u; expected=e; range} -> 
     concat ["Branch type mismtach:"; Span.range_str range; Type.to_string u; "!="; Type.to_string e]
+| PatternMismatch {unexpected=u; expected=e; range} -> 
+    concat ["Pattern mismtach:"; Span.range_str range; Type.to_string u; "!="; Type.to_string e]
 | ListItemTypeMismatch {unexpected=u; expected=e; range} -> 
     concat ["List item mismtach:"; Span.range_str range; Type.to_string u; "!="; Type.to_string e]
 | SourceNotFound {source} -> 

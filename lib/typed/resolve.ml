@@ -236,8 +236,32 @@ and binding ~sub_scope ctx node =
         ctx.errors <- ctx.errors @ ctx'.errors;
         result
 
-and block ctx n =
-    let stmts = List.map Block.(n.stmts) ~f:(function 
+and matc ~ctx n =
+    let rec resolve_pattern ~ctx = function
+        | Match.Unit -> Match.Unit
+        | Match.Any -> Match.Any
+        | Match.Tuple tup -> Match.Tuple (List.map tup ~f:(resolve_pattern ~ctx))
+        | Match.List li -> Match.List { 
+            items = List.map li.items ~f:(resolve_pattern ~ctx);
+            rest = Option.map li.rest ~f:(resolve_pattern ~ctx);
+            item_typ = ctx.tempvar()
+        }
+        | Match.Str s -> Match.Str s
+        | Match.Int i -> Match.Int i
+        | Match.Param p -> (
+            let typ = ctx.tempvar() in
+            let id = Scope.add_binding ctx.scope p.given_name (Type.make_scheme [] typ) in
+            Match.Param {p with scope_name = id.name; typ}
+        )
+    in
+    let e = expr ctx Match.(n.expr) in
+    let cases = List.map n.cases ~f: (fun case ->
+        let ctx = sub_ctx ctx Resolver.Scope.sub_local in
+        let pattern = resolve_pattern ~ctx case.pattern in
+        let stmts = block_stmts ~ctx case.stmts in
+        Match.{stmts; pattern}
+    ) in {n with cases; expr = e}
+    and block_stmts ~ctx stmts = List.map stmts ~f:(function 
         | Stmt.Expr n -> 
             Stmt.Expr (expr ctx n)
         | Stmt.Let n -> 
@@ -245,7 +269,9 @@ and block ctx n =
             Stmt.Let result
         | Stmt.Block 
             _ -> raise Common.TODO (* Disallow block inside blocks *)
-    ) in {n with stmts = stmts}
+    ) 
+and block ctx n =
+    {n with stmts = block_stmts ~ctx Block.(n.stmts)}
 and expr ctx = function
 | Expr.Value v -> Expr.Value v
 | Expr.Ident n -> Expr.Ident (ident ctx n)
@@ -255,6 +281,7 @@ and expr ctx = function
 | Expr.Foreign f -> Expr.Foreign f
 | Expr.Cond n -> Expr.Cond (cond ctx n )
 | Expr.Tuple t -> Expr.Tuple {t with exprs = List.map ~f:(expr ctx) t.exprs}
+| Expr.Match m -> Expr.Match (matc ~ctx m)
 and apply ctx n = 
     let fn_result = expr ctx Apply.(n.fn) in
     let arg_results = List.map ~f: (expr ctx) n.args in

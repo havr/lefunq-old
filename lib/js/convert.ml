@@ -132,6 +132,7 @@ end and expr ~ctx  = function
     | Typed.Expr.Ident m -> Ast.Expr.Ident (ident ~ctx m)
     | Typed.Expr.Apply m -> apply ~ctx m
     | Typed.Expr.Lambda m -> lambda ~ctx m
+    | Typed.Expr.Match _ -> (raise Common.TODO)
     | Typed.Expr.Cond m -> cond ~ctx m
     | Typed.Expr.Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (expr ~ctx))
     | Typed.Expr.Foreign f -> Ast.Expr.Ident Ast.Ident.{value = foreign_require ^ "." ^ f.name}

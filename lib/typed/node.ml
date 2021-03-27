@@ -138,7 +138,12 @@ end = struct
         let names = n.resolution 
             |> List.map ~f:resolved 
             |> String.concat ~sep: "."
-        in Pp.(branch [text "IDENT"; text (resolved n.resolved); text names; text scheme] [])
+        in Pp.(branch [
+            text "IDENT"; 
+            text @@ "resolved:" ^ (resolved n.resolved);
+            text names;
+            text @@ "scheme:" ^ scheme
+        ] [])
 
     (* Use "equal" everywhere *)
     let equals a b =
@@ -312,6 +317,106 @@ end = struct
         let params_branch = Pp.(branch [text "PARAMS"] params) in
         Pp.(branch [text "LAMBDA"] [params_branch; Block.pretty_print n.block])
 end
+and Match: sig 
+    type pattern = 
+        | Any
+        | Unit
+        | Int of string
+        | Str of string
+        | Param of {
+            given_name: string;
+            scope_name: string;
+            typ: Type.t
+        }
+        | Tuple of pattern list
+        | List of {
+            item_typ: Type.t;
+            items: pattern list;
+            rest: pattern option
+        }
+
+    val pattern_to_type: pattern -> Type.t
+
+    type case = {
+        (* case_typ: Type.t; *)
+        pattern: pattern;
+        stmts: Stmt.t list
+    }
+    
+    type t = {
+        range: Span.range;
+        typ: Type.t;
+        expr: Expr.t;
+        cases: case list
+    }
+
+    val pretty_print: t -> Pp.branch
+end = struct 
+    type pattern = 
+        | Any
+        | Unit
+        | Int of string
+        | Str of string
+        | Param of {
+            given_name: string;
+            scope_name: string;
+            typ: Type.t
+        }
+        | Tuple of pattern list
+        | List of {
+            item_typ: Type.t;
+            items: pattern list;
+            rest: pattern option
+        }
+
+    let rec pattern_to_type = function
+        | Any -> Type.Unknown
+        | Unit -> Base_types.unit
+        | Int _ -> Base_types.int
+        | Str _ -> Base_types.str
+        | Tuple tup -> Type.Tuple (List.map ~f: pattern_to_type tup)
+        | List li -> Base_types.list li.item_typ
+        | Param p -> p.typ
+
+    let rec pretty_print_pattern = function
+        | Any -> Pp.(branch [text "_"] [])
+        | Unit -> Pp.(branch [text "()"] [])
+        | Int i -> Pp.(branch [text "INT"; text i] [])
+        | Str s -> Pp.(branch [text "STR"; text s] [])
+        | Param p -> Pp.(branch [text "PARAM"; text p.given_name; text p.scope_name; text @@ Type.to_string p.typ] [])
+        | Tuple tup -> Pp.(branch [text "TUPLE"] (List.map tup ~f: pretty_print_pattern))
+        | List li -> Pp.(branch [text "LIST"] [
+            branch [text "ITEMS"] (List.map li.items ~f: pretty_print_pattern);
+            branch [text ".."] (match li.rest with 
+                | Some p -> [pretty_print_pattern p] 
+                | None -> []
+            )])
+
+    type case = {
+        (* case_typ: Type.t; *)
+        pattern: pattern;
+        stmts: Stmt.t list
+    }
+
+    let pretty_print_case n =
+        Pp.(branch [text "CASE"(*; text @@ Type.to_string n.case_typ*)] [
+            branch [text "PATTERN"] [pretty_print_pattern n.pattern];
+            branch [text "SMTS"] (List.map ~f: Stmt.pretty_print n.stmts)
+        ])
+
+    type t = {
+        range: Span.range;
+        typ: Type.t;
+        expr: Expr.t;
+        cases: case list
+    }
+
+    let pretty_print n =
+        Pp.(branch [text "MATCH"; text @@ Type.to_string n.typ] [
+            branch [text "EXPR"] [Expr.pretty_print n.expr];
+            branch [text "CASES"] (List.map ~f:pretty_print_case n.cases)
+        ])
+end
 and Expr: sig 
     type t = 
         | Value of Value.t 
@@ -322,6 +427,7 @@ and Expr: sig
         | Li of Li.t
         | Tuple of Tuple.t
         | Foreign of Foreign.t
+        | Match of Match.t
 
     val to_string: t -> string
     val range: t -> Span.range
@@ -336,6 +442,7 @@ end = struct
         | Li of Li.t
         | Tuple of Tuple.t
         | Foreign of Foreign.t
+        | Match of Match.t
 
     let range = function
     | Value v -> v.range
@@ -346,6 +453,7 @@ end = struct
     | Tuple tup -> tup.range
     | Foreign f -> f.range
     | Li l -> l.range
+    | Match m -> m.range
 
     let pretty_print = function
     | Value v -> Value.pretty_print v
@@ -356,6 +464,7 @@ end = struct
     | Tuple tup -> Tuple.pretty_print tup
     | Foreign f -> Foreign.pretty_print f
     | Li l -> Li.pretty_print l
+    | Match m -> Match.pretty_print m
 
     let to_string = function
     | Value v -> Value.to_string v
@@ -366,6 +475,7 @@ end = struct
     | Tuple _ -> raise Common.TODO
     | Foreign _ -> raise Common.TODO
     | Li _ -> raise Common.TODO
+    | Match _ -> raise Common.TODO
 end
 
 module Import = struct 

@@ -153,6 +153,13 @@ module Frontend = struct
             msg = "Unexpected type: " ^ (Typed.Type.to_string type_provided) ^ " expecting " ^ (Typed.Type.to_string type_expected);
             context = None
         }
+    | Typed.Erro.PatternMismatch {expected; unexpected; range } ->
+        Common.Err.{
+            file;
+            range;
+            msg = "Pattern mismatch: " ^ (Typed.Type.to_string unexpected) ^ " expecting " ^ (Typed.Type.to_string expected);
+            context = None
+        }
     | Typed.Erro.NotFunction { type_provided; range } ->
         Common.Err.{
             file;
@@ -395,11 +402,13 @@ module JsBackend = struct
                     order := (dep, n) :: !order; 
                     dups := Set.add !dups dep
                 ) in
-            let rec block b = List.iter Block.(b.stmts) ~f:(function
+            let rec block b = block_stmts Block.(b.stmts) 
+            and block_stmts = List.iter ~f:(function
                 | Stmt.Expr e -> expr e 
                 | Stmt.Block bs -> block bs
                 | Stmt.Let t -> block t.block
             )
+
             and expr = function
                 | Value _ -> ()
                 | Li li -> List.iter li.items ~f:expr
@@ -415,6 +424,9 @@ module JsBackend = struct
                     expr app.fn;
                     List.iter app.args ~f:expr
                 | Lambda lam -> block lam.block
+                | Match m -> (* TODO: visit pattern *)
+                    (expr m.expr);
+                    List.iter m.cases ~f: (fun case -> block_stmts case.stmts)
                 | Cond t -> 
                     List.iter t.cases ~f: (fun {if_; then_} ->
                         block if_;

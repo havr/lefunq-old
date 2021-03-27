@@ -24,6 +24,9 @@ type t = Int of string
     | FuncArrow
     | Foreign
     | Module
+    | Pipe
+    | Spread
+    | Match
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -53,6 +56,9 @@ let to_string lexeme = match lexeme with
     | FuncArrow -> "->"
     | Foreign -> "foreign"
     | Module -> "module"
+    | Pipe -> "|"
+    | Match -> "?"
+    | Spread -> ".."
     | Error e -> "error: " ^ e
 
 let eof = Eof

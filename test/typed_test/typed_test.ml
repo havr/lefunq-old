@@ -1,3 +1,6 @@
+open Typed_test__infer__helper
+open Helper
+
 let resolved name = Typed.Symbol.Resolved.make name @@ Some (Typed.Symbol.Id.make "" [] name)
 module Fake = struct 
   let local_ident name type_ = 
@@ -21,27 +24,8 @@ let test_todo () = Alcotest.fail "todo"
 
 open Base
 
-let difference ~equals src check = 
-  List.fold src ~init: ([]) ~f: (fun a x ->
-    match List.find check ~f: (equals x) with
-    | Some _ -> a
-    | None -> x :: a
-  )
 
-module Unify = struct 
-  open Typed
 
-  let results expect substs = List.filter_map expect ~f: (fun (var', subst) ->
-    match Map.find substs var' with
-    | Some t ->
-      if not @@ Type.equals t subst then begin
-        let expect_str = Type.to_string subst in
-        let got_str = Type.to_string t in
-        Some (var' ^ ": " ^ got_str ^ " != " ^ expect_str)
-      end else None
-    | None -> 
-      Some (var' ^ ": no substitution")
-  )
 (*
   let test ~src ~dst ?(errors=[]) ~expect () =
     let ctx = Typed.Infer.make_ctx () in
@@ -150,9 +134,7 @@ module Unify = struct
     "InferTest", tests
   ]
   *)
-end
 
-let simple name = Typed.Type.Simple (name, [])
 module Infer = struct 
   let local_ident_expr name = Typed.Expr.Ident (Typed.Ident.{
     resolved = resolved name;
@@ -188,44 +170,6 @@ module Infer = struct
     exprs = exprs
   })
 
-  let check_results ?(errors=[]) ~ctx ~expect_type ~expect subst typ = 
-    let typ = Typed.Subst.apply_substs subst typ in
-    let results = Unify.results expect subst in
-    begin 
-      if not @@ Typed.Type.equals typ expect_type then
-        Alcotest.fail @@ String.concat [
-          "(got) "; Typed.Type.to_string typ; " != (expected) "; Typed.Type.to_string expect_type
-        ]
-    end;
-    begin 
-      if List.length results > 0 then
-        Alcotest.fail (String.concat ~sep: "\n" results)
-    end;
-    begin 
-        let errors_expected_not_found = difference 
-          ~equals: (Typed.Erro.equals) errors Typed.Infer.(ctx.errors) in
-        let unexpected_got = difference 
-          ~equals: (Typed.Erro.equals) ctx.errors errors in
-        let map_errors errors = errors |> List.map ~f:Typed.Erro.to_string in
-        let exp_not_found = if List.length errors_expected_not_found > 0 then
-          map_errors errors_expected_not_found 
-          |> String.concat ~sep: "\n" else "" in
-        let unexp = if List.length unexpected_got > 0 then
-          map_errors unexpected_got 
-          |> String.concat ~sep: "\n" else "" in
-        let labeled_exp = if String.is_empty exp_not_found then
-          "" else "expected error: " ^ exp_not_found in
-        let labeled_unexp = if String.is_empty unexp then
-          "" else "unexpected error: " ^ unexp in
-
-        let issues = [labeled_exp; labeled_unexp] 
-        |> List.filter ~f: (fun s -> not @@ String.is_empty s) in
-        if List.length issues > 0 then
-          issues 
-            |> String.concat ~sep: "\n"
-            |> Alcotest.fail
-            |> ignore
-      end
 
   let test ?(errors=[]) ~node ~expect_type ~expect = 
     let ctx = Typed.Infer.{
@@ -544,98 +488,9 @@ module Infer = struct
   ]
 
   module Let = struct 
-    open Typed
-    (* TODO: open Typed *)
-    (* TODO: use test block *)
-    let test ?(errors=[]) ~stmts ~expect_type ~expect = 
-    let ctx = Typed.Infer.{
-      tempvar = Type_util.make_tempvar_gen "t";
-      errors = [];
-      substs = Map.empty(module String);
-      env = Map.empty(module String);
-    } in 
-      let typ = Typed.Infer.block ~ctx (Typed.Block.{stmts = stmts; range = Common.Span.empty_range}) in
-      check_results ~ctx ~errors ~expect_type ~expect ctx.substs typ
-
-    open Helper
-
-    let let_single () = test
-      ~stmts: [
-        let_stmt "hello" [
-          value_stmt "10" (Base_types.int)
-        ];
-        local_ident_stmt "hello" 
-      ]
-      ~expect_type: (
-        simple Base_types.int_name;
-      )
-      ~errors: []
-      ~expect: []
-      
-
-    let let_lambda () = test
-      ~stmts: [
-        let_stmt "hello" [
-          lambda_stmt [Param.{given = "a"; resolved= ""}, Type.Var "t"] [
-            local_ident_stmt ~scheme:(Type.make_scheme [] (Type.Var "t")) "a"
-          ]
-        ];
-        local_ident_stmt "hello"
-      ]
-      ~expect_type: (
-        (Type.lambda [Type.Var "t"; Type.Var "t"]).typ;
-      )
-      ~errors: []
-      ~expect: []
-
-    let tests = [
-      "let:single", `Quick, let_single;
-      "let:lambda", `Quick, let_lambda;
-    ]
   end
 
   module Block = struct 
-    let test ?(errors=[]) ~stmts ~expect_type ~expect = 
-      let ctx = Typed.Infer.{
-        tempvar = Typed.Type_util.make_tempvar_gen "t";
-        errors = [];
-        substs = Map.empty(module String);
-        env = Map.empty(module String);
-      } in
-      let typ = Typed.Infer.block ~ctx (Typed.Block.{stmts = stmts; range = Common.Span.empty_range}) in
-      check_results ~ctx ~errors ~expect_type ~expect ctx.substs typ
-      
-    let test_returns_last_statement () = test
-      ~stmts: [
-        Typed.Stmt.Expr (Typed.Expr.Tuple (Typed.Tuple.{exprs=[]; range = Common.Span.empty_range}));
-        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.Base_types.int; range = Common.Span.empty_range}))
-      ]
-      ~expect_type: (
-        Typed.Base_types.int;
-      )
-      ~errors: []
-      ~expect: []
-
-    let test_not_unit_result_error () = test
-      ~stmts: [
-        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="hello"; type_=Typed.Base_types.str; range = Common.Span.empty_range}));
-        Typed.Stmt.Expr (Typed.Expr.Value (Typed.Value.{value="10"; type_=Typed.Base_types.int; range = Common.Span.empty_range}))
-      ]
-      ~expect_type: (
-        Typed.Base_types.int;
-      )
-      ~errors: [
-        Typed.Erro.IgnoredResult {
-          range = Common.Span.empty_range;
-          unexpected = Typed.Base_types.str;
-        }
-      ]
-      ~expect: []
-
-    let tests = [
-      "ignored result", `Quick, test_not_unit_result_error;
-      "last statement", `Quick, test_returns_last_statement
-    ]
   end
 
   let single_expr_block expr = Typed.Block.{stmts = [Typed.Stmt.Expr expr]; range = Common.Span.empty_range}
@@ -844,6 +699,12 @@ module Infer = struct
 end
 
 let tests = [
+  (* "Unify", Unify.tests; *)
+  "Typed:Let", Typed_test__let.tests;
+  "Block", Typed_test__infer__block.tests;
+  "typed:match", Typed_test__match.tests;
+  "Cond", Infer.Cond.tests;
+  "Infer", Infer.tests;
   "Global", Global_infer_test.tests
 ]
 
