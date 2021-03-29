@@ -4,7 +4,7 @@ open Helper
 open Typed_test__infer__helper
 
 let test ?(errors=[]) ~stmts ~expect_type ~expect = 
-    let ctx = Infer.{
+    let ctx = Inferno.{
         tempvar = Type_util.make_tempvar_gen "t";
         errors = [];
         substs = Map.empty(module String);

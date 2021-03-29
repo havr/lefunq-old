@@ -17,7 +17,7 @@ let todo_hello () =
         let transformed = Typed.Transform.block block in
         let resolve_ctx = Resolve.make_context (Resolver.Scope.toplevel (Resolver.Scope.root "")) in
         let block = Resolve.block resolve_ctx transformed in
-        let infer_ctx = Infer.make_ctx ~env: (Infer.make_env()) in
+        let infer_ctx = Typed.Inferno.make_ctx ~env: (Inferno.make_env()) in
         let typed = Infer.block ~ctx: infer_ctx block in
         Alcotest.(check bool) "result types are equal" true @@ Typed.Type.equals typed (Typed.Type.lambda [Typed.Type.Var "p0"; Typed.Type.Var "p0"]).typ;
     end

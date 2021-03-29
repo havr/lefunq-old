@@ -172,7 +172,7 @@ module Infer = struct
 
 
   let test ?(errors=[]) ~node ~expect_type ~expect = 
-    let ctx = Typed.Infer.{
+    let ctx = Typed.Inferno.{
       tempvar = Typed.Type_util.make_tempvar_gen "t";
       errors = [];
       substs = Map.empty(module String);

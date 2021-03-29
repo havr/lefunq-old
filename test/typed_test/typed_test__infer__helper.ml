@@ -54,4 +54,4 @@ let assert_errors expected got =
       if List.length results > 0 then
         Alcotest.fail (String.concat ~sep: "\n" results)
     end;
-    assert_errors errors Typed.Infer.(ctx.errors)
+    assert_errors errors Typed.Inferno.(ctx.errors)

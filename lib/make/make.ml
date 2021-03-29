@@ -237,6 +237,20 @@ module Frontend = struct
             msg = "A source contains errors:" ^ (source.value);
             context = None
         }
+    | Typed.Erro.UnusedMatchCase {range} -> 
+        Common.Err.{
+            file;
+            range = range;
+            msg = "This match case is unused";
+            context = None
+        }
+    | Typed.Erro.NonExhaustivePatternMatching {range; missing_cases} -> 
+        Common.Err.{
+            file;
+            range = range;
+            msg = "This match pattern matching is not exhaustive. Unused cases:" ^ (missing_cases |> String.concat ~sep: "\n");
+            context = None
+        }
 
     let process ~ctx source =
         let rec resolve_source import_stack source = 

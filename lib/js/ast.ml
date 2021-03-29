@@ -102,6 +102,11 @@ end = struct
     let assign a = Assign a
 end
 
+and Index: sig 
+    type t = {expr: Expr.t; value: Expr.t}
+end = struct 
+    type t = {expr: Expr.t; value: Expr.t}
+end
 and Object: sig 
     type entry = | Kv of (string * Expr.t) | Pun of string
     type t = {
@@ -113,6 +118,17 @@ end = struct
         entries: entry list
     }
 end
+and Property: sig 
+    type t = {expr: Expr.t; name: string}
+end = struct 
+    type t = {expr: Expr.t; name: string}
+end
+and Call: sig 
+    type t = {expr: Expr.t; args: Expr.t list}
+end = struct 
+    type t = {expr: Expr.t; args: Expr.t list}
+end
+
 and Expr: sig 
     type t = 
         | Num of Num.t 
@@ -127,6 +143,9 @@ and Expr: sig
         | Parens of Expr.t
         | Li of (Expr.t list)
         | Void
+        | Index of Index.t
+        | Property of Property.t
+        | Call of Call.t
 
     val ident: Ident.t -> t
 end = struct
@@ -143,6 +162,9 @@ end = struct
         | Parens of Expr.t
         | Li of (Expr.t list)
         | Void
+        | Index of Index.t
+        | Property of Property.t
+        | Call of Call.t
 
     let ident id = Ident id
 end
@@ -168,6 +190,14 @@ let separate sep list = match list with
    | [] -> []
    | first :: rest -> 
         first :: (rest |> List.map (fun item -> [sep; item]) |> List.flatten)
+
+let (|*|) a b = Printer.seq [a; b]
+
+let join by exprs = 
+    let open Base in
+    Printer.seq (List.intersperse exprs ~sep: by)
+
+let surround_by_strs start fin expr = Printer.(seq [str start; expr; str fin])
 module Prn = struct
     open Printer
 
@@ -225,6 +255,7 @@ module Prn = struct
         ) |> seq ~sep: ",\n" in
         seq [str "{"; entries; str "}"]
     and expr = function
+        | Expr.Index n -> seq [expr Index.(n.expr); str "["; expr n.value; str "]"]
         | Expr.Lambda n -> lambda n
         | Expr.Num n -> num n
         | Expr.Object n -> objec' n
@@ -233,6 +264,14 @@ module Prn = struct
         | Expr.Str n -> string n
         | Expr.Binary n -> binary n
         | Expr.Block n -> block n
+        | Expr.Call n -> 
+            let open Base in
+            let args = Call.(n.args)
+            |> List.map ~f: expr
+            |> join (str ", ")
+            |> surround_by_strs "(" ")" in
+            (expr Call.(n.expr)) |*| args
+        | Expr.Property n -> seq [expr Property.(n.expr); str "."; str n.name]
         | Expr.Li li ->
             let open Base in
             let items = List.map ~f:expr li in

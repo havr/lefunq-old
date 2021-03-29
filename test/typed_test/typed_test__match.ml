@@ -177,6 +177,7 @@ let tests = [
             let main n = {
                 n ? {
                     | [m; 0; p] -> p + m
+                    | _ -> 0
                 }
             }
         |}
@@ -193,6 +194,7 @@ let tests = [
             let main n = {
                 n ? {
                     | [m; "hello"; p] -> p + 1
+                    | _ -> 0
                 }
             }
         |}
@@ -203,6 +205,81 @@ let tests = [
                     (* uniform scheme for such errors *)
                     type_expected = Base_types.int;
                     type_provided = Base_types.str;
+                }
+            ]
+        });
+
+    "duplicate patterns: simple", `Quick, test 
+        ~code: {|
+            let main n = {
+                n ? {
+                    | m -> ()
+                    | m -> ()
+                    | _ -> ()
+                }
+            }
+        |}
+        ~expect: (Failure {
+            errors = [
+                UnusedMatchCase {
+                    range = Span.empty_range;
+                }
+            ]
+        });
+
+    "duplicate: nested", `Quick, test 
+        ~code: {|
+            let main n = {
+                n ? {
+                    | m, 0 -> ()
+                    | _, 0 -> ()
+                }
+            }
+        |}
+        ~expect: (Failure {
+            errors = [
+                UnusedMatchCase {
+                    range = Span.empty_range;
+                };
+                NonExhaustivePatternMatching {
+                    range = Span.empty_range;
+                    missing_cases = [];
+                }
+            ]
+        });
+
+    "non exhaustive: empty list", `Quick, test 
+        ~code: {|
+            let main n = {
+                n ? {
+                    | [] -> ()
+                    | [_; _ ..rest] -> ()
+                }
+            }
+        |}
+        ~expect: (Failure {
+            errors = [
+                NonExhaustivePatternMatching {
+                    range = Span.empty_range;
+                    missing_cases = [];
+                }
+            ]
+        });
+
+    "duplicate patterns: lists", `Quick, test 
+        ~code: {|
+            let main n = {
+                n ? {
+                    | [1 ..rest] -> ()
+                    | [1; t ..rest] -> ()
+                    | _ -> ()
+                }
+            }
+        |}
+        ~expect: (Failure {
+            errors = [
+                UnusedMatchCase {
+                    range = Span.empty_range;
                 }
             ]
         });
@@ -231,6 +308,7 @@ let tests = [
                     | [1] -> ()
                     | [1; m] -> ()
                     | [1; 2 ..r] -> ()
+                    | _ -> ()
                 }
             }
         |}
@@ -266,7 +344,6 @@ let tests = [
                     | [] -> ()
                     | [a, [b, c]] -> ()
                     | [item ..rest] -> ()
-                    | t -> ()
                 }
             }
         |}

@@ -110,6 +110,9 @@ let try_fold list ~init ~f =
     in loop init list
 
 module Util = struct 
+    module Strings = struct 
+        let surround start fin str = start ^ str ^ fin
+    end
     module Lists = struct 
         let last_rest l = match List.rev l with
         | [] -> raise (Invalid_argument "list is empty")
@@ -118,3 +121,8 @@ module Util = struct
         let flat_map ~f = List.fold ~init: [] ~f: (fun acc item -> acc @ (f item))
     end
 end
+
+let (--) i j = 
+    let rec aux n acc =
+      if n > j  then acc else aux (n + 1) (n :: acc)
+    in aux i [] ;;

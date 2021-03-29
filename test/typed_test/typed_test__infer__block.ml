@@ -2,7 +2,7 @@ open Base
 open Typed_test__infer__helper
 
     let test ?(errors=[]) ~stmts ~expect_type ~expect = 
-      let ctx = Typed.Infer.{
+      let ctx = Typed.Inferno.{
         tempvar = Typed.Type_util.make_tempvar_gen "t";
         errors = [];
         substs = Map.empty(module String);

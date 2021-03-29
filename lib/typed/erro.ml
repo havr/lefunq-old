@@ -42,8 +42,14 @@ type t =
     range: Span.range;
     unexpected: Type.t;
     expected: Type.t;
+} | UnusedMatchCase of {
+    range: Span.range;
+} | NonExhaustivePatternMatching of {
+    range: Span.range;
+    (* use a data structure *)
+    missing_cases: string list;
 }
-
+ 
 
 (* let equals a b = phys_equal a b (*match (a, b) with *)
 | UndeclaredIdentifier a, UndeclaredIdentifier b ->
@@ -92,9 +98,12 @@ let clear_range = function
     SourceCompileError {source = {source with range = Span.empty_range}}
 | SourceSystemError {source} -> 
     SourceSystemError {source = {source with range = Span.empty_range}}
+| NonExhaustivePatternMatching {missing_cases; _} -> 
+    NonExhaustivePatternMatching {range = Span.empty_range; missing_cases}
+| UnusedMatchCase {range} -> UnusedMatchCase {range}
 
 let concat = String.concat ~sep: " "
-let to_string = function 
+let to_string = function
 | UndeclaredIdentifier {given_name; range} ->
     concat ["Undeclared identifier:"; Span.range_str range; given_name]
 | TypeMismatch {type_expected = te; type_provided = tp; range} ->
@@ -126,5 +135,9 @@ let to_string = function
     concat ["Source contains errors"; Span.range_str source.range; source.value]
 | SourceSystemError {source} -> 
     concat ["System error while reading source"; Span.range_str source.range; source.value]
+| UnusedMatchCase {range} -> 
+    concat ["Match cases is unused"; Span.range_str range]
+| NonExhaustivePatternMatching{range; missing_cases} -> 
+    concat ["Non exhaustive pattern matching"; Span.range_str range; String.concat missing_cases ~sep: ", "]
 
 let equals a b = String.equal (to_string a) (to_string b)
