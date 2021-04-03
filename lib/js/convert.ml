@@ -61,6 +61,7 @@ type ctx = {
     required_sources: string StringMap.t
 }
 
+
 let resolve_ident ~ctx = function
     | [] -> raise (Common.Unreachable)
     | head :: rest -> 
@@ -86,11 +87,11 @@ let ident ~ctx n =
     Ast.Ident.{value = (resolve_ident ~ctx @@ n.resolution @ [n.resolved])}
 
 let basic b =
-    if phys_equal Typed.Value.(b.type_) Typed.Base_types.str 
+    if Typed.Type.equals Typed.Value.(b.type_) Typed.Base_types.str 
         then Ast.Expr.Str(Ast.Str.{value = b.value})
-    else if phys_equal Typed.Value.(b.type_) Typed.Base_types.int 
+    else if Typed.Type.equals Typed.Value.(b.type_) Typed.Base_types.int 
         then Ast.Expr.Num(Ast.Num.{value = b.value})
-    else if phys_equal Typed.Value.(b.type_) Typed.Base_types.unit 
+    else if Typed.Type.equals Typed.Value.(b.type_) Typed.Base_types.unit 
         then Ast.Expr.Void
     else raise @@ Invalid_argument ("unexpected basic type: " ^ (Typed.Type.to_string b.type_) ^ "(has value: " ^ b.value ^ ")")
 
@@ -132,7 +133,18 @@ end and expr ~ctx  = function
     | Typed.Expr.Ident m -> Ast.Expr.Ident (ident ~ctx m)
     | Typed.Expr.Apply m -> apply ~ctx m
     | Typed.Expr.Lambda m -> lambda ~ctx m
-    | Typed.Expr.Match _ -> (raise Common.TODO)
+    | Typed.Expr.Match m -> 
+        let stmt_to_expr = function
+        | Ast.Block.Expr expr -> expr
+        | stmt -> Ast.Expr.Block (Ast.Block.{stmts=[stmt]})
+        in
+        let cond = Convert_match.match' 
+            ~stmts: (fun stmts -> List.map stmts ~f: (block_stmt ~ctx))
+            ~map_return: (fun stmt -> Ast.Block.Return (Ast.Return.{expr = stmt_to_expr stmt}))
+            (Ast_util.Expr.ident "__TODO")
+            m.cases
+        in
+        Ast_util.Lambdas.scoped ["__TODO", expr ~ctx m.expr] [Ast.Block.Cond cond]
     | Typed.Expr.Cond m -> cond ~ctx m
     | Typed.Expr.Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (expr ~ctx))
     | Typed.Expr.Foreign f -> Ast.Expr.Ident Ast.Ident.{value = foreign_require ^ "." ^ f.name}
@@ -160,9 +172,9 @@ and lambda_like ~ctx params bl =
             | Typed.Param.Tuple _ -> raise Common.TODO
             | Typed.Param.Unit -> []
         in
-        let inner_lambda = Ast.Lambda.{args = convert_arg Typed.Param.(first.shape); block = block ~ctx Typed.Block.(bl.stmts)} in
+        let inner_lambda = Ast.Lambda.{params = convert_arg Typed.Param.(first.shape); block = block ~ctx Typed.Block.(bl.stmts)} in
         Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner arg -> 
-            Ast.Lambda.{args = convert_arg arg.shape; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
+            Ast.Lambda.{params = convert_arg arg.shape; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
         ) rest)
 and lambda ~ctx n = lambda_like ~ctx Typed.Lambda.(n.params) n.block
 

@@ -81,9 +81,11 @@ end = struct
     type t = { fn: Expr.t; args: Expr.t list}
 end
 and Lambda: sig 
-    type t = {args: string list; block: Block.t}
+    type t = {params: string list; block: Block.t}
+    val make: string list -> Block.stmt list -> t
 end = struct
-    type t = {args: string list; block: Block.t}
+    type t = {params: string list; block: Block.t}
+    let make params stmts = {params; block = Block.{stmts}}
 end
 and Assign: sig 
     type t = { ident: Ident.t; expr: Expr.t }
@@ -294,7 +296,7 @@ module Prn = struct
             ]
     and return n = seq ~sep: " " [str "return"; expr Return.(n.expr)]
     and lambda n = 
-        let args = Lambda.(n.args) |> List.map(fun arg -> str arg) |> separate (str ", ") in
+        let args = Lambda.(n.params) |> List.map(fun param -> str param) |> separate (str ", ") in
         let args_tuple = seq[str "("; seq args; str ")"] in
         let args_block = stmts Lambda.(n.block.stmts) in
             seq [args_tuple; str "=>"; str "{"; newline; ident_up [args_block]; str "}"]
@@ -304,3 +306,4 @@ end
 
 let const name expr = Const.{name; expr}
 let const_block name stmts = Const.{name; expr = Const.Block Block.{stmts}}
+let const_expr name expr = Const.{name; expr = Const.Expr expr}

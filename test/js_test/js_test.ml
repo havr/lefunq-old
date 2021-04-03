@@ -256,6 +256,66 @@ let lambdas = EndToEnd.define "lambdas" [
     };
 ]
 
+let matching = EndToEnd.define "js:pattern-match" [
+    {
+        name = "numbers";
+        expect = "42";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let main = {
+                    let result = 1 ? {
+                        | 1 -> 42
+                        | _ -> 100
+                    }
+                    println result
+                }
+            |}
+        ]
+    };
+
+    {
+        name = "tuples";
+        expect = "10\n20\n30";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let fn x = x ? {
+                    | a, 0 -> a
+                    | 0, b -> b
+                    | a, b -> a + b
+                }
+
+                let main = {
+                    println (fn (10, 0))
+                    println (fn (0, 20))
+                    println (fn (10, 20))
+                }
+            |}
+        ]
+    };
+    {
+        name = "lists";
+        expect = "0\n1\n-1";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let fn n = n ? {
+                    | [] -> 0
+                    | [n] -> n
+                    | [n ..rest] -> -n
+                }
+
+                let main = {
+                    println (fn [])
+                    println (fn [1])
+                    println (fn [1; 2])
+                }
+            |}
+        ]
+    }
+]
+
 let modules = EndToEnd.define "modules" [
     {
         name = "simple module";
@@ -348,4 +408,4 @@ let modules = EndToEnd.define "modules" [
     }; *)
 ]
 
-let tests = [sigs; lambdas; modules] 
+let tests = [sigs; lambdas; modules; matching] 

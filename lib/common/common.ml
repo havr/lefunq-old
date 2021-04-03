@@ -110,6 +110,11 @@ let try_fold list ~init ~f =
     in loop init list
 
 module Util = struct 
+    module StringSet = struct 
+        let from_list = List.fold 
+            ~init:(Set.empty(module String))
+            ~f: (fun set v -> Set.add set v)
+    end
     module Strings = struct 
         let surround start fin str = start ^ str ^ fin
     end
@@ -119,6 +124,17 @@ module Util = struct
         | last :: rest -> (last, List.rev rest)
 
         let flat_map ~f = List.fold ~init: [] ~f: (fun acc item -> acc @ (f item))
+        let flatten = List.fold ~init: [] ~f: (fun acc item -> acc @ item)
+        let zipmap_default x y ~f ~default = 
+            let rec loop' result x y = match (x, y) with
+                | [], [] -> result
+                | x :: xs, [] ->
+                    loop' (f x default :: result) xs []
+                | [], y :: ys -> 
+                    loop' (f default y :: result) [] ys
+                | x :: xs, y :: ys -> 
+                    loop' (f x y :: result) xs ys
+            in List.rev (loop' [] x y)
     end
 end
 

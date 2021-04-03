@@ -33,6 +33,7 @@ module Resolve = Resolve
 module Transform = Transform
 module Erro = Erro
 module Util = Util
+module Infer_match = Infer_match
 
 (* TODO: move somewhere *)
 module Infer = struct 

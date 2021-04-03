@@ -155,6 +155,88 @@ let test ~code ~expect () =
             Common.log ["\n"; Pp.to_string [Typed.Module.pretty_print ast]];
             Alcotest.fail ("Expected failure, got OK")
         
+
+module Coverage_test = struct 
+    let check_cases = function
+        | [] -> (raise Common.Unreachable)
+        | h :: t ->
+            let open Typed.Infer_match.Coverage in
+            let h' = invert h in
+            Common.log ["CASE"; to_string h; "=>"; list_to_string h'];
+            List.fold t ~init:h' ~f:(fun unc c ->
+                let c' = invert c in
+                Common.log ["CASE"; to_string c; "=>"; list_to_string c'];
+                let unc' = merge unc c' in
+                Common.log ["UNC"; list_to_string unc'];
+                unc'
+            )
+
+    let should_match name cases = (name, `Quick, (fun () ->
+        let open Typed.Infer_match.Coverage in
+        match check_cases cases with
+        | [] -> ()
+        | t -> Alcotest.fail ("expected exhaustive match, got:" ^ (list_to_string t))
+    ))
+
+    open Typed.Infer_match.Coverage
+    let mkvar set n = Variant (n, set)
+    let t = mkvar ["A"; "B"; "C"]
+    let b = mkvar ["T"; "F"]
+
+    let tests = [
+        should_match "duplicate" [
+            Tuple [b "T"; All];
+            Tuple [b "T"; All];
+        ]
+    ]
+end
+
+(* let tests = Coverage_test.tests *)
+(* let tests = Coverage_test.tests ["foo", `Quick, (fun () ->
+    let open Typed.Infer_match.Coverage in
+    (* let bools = ["T"; "F"] in *)
+    (* let boo = mkvar bools in *)
+    (* let mycov = Tuple [Uncountable (true, "0"); Variant ("T", bools)] in  *)
+
+    (* "F".. -> "T"..None; *..None *)
+    (*
+    | [] -> ()
+    | [T] -> ()
+    | [_ .._] -> ()
+    | t, C ->
+    | t .. ->
+
+    The following are unmatched: [F]
+     *)
+    check_cases [
+        (* List ([], false); *)
+        List ([All; t "C"], true);
+        List ([t "A"; t "C"], true);
+        List ([All; t "C"], true);
+        (* List ([All; t "A"; t "A"], true);
+        List ([All; All; t "A"], false);
+        List ([All; All; All], true); *)
+        (* List ([All; t "A"], true);
+        List ([t "C"], false); *)
+
+        (* Tuple [t "A"; t "B"];
+        Tuple [t "A"; t "C"];
+        Tuple [t "A"; t "A"];
+        Tuple [t "B"; All];
+        Tuple [t "C"; All]; *)
+
+        (* Tuple [t "A"; t "B"];
+        Tuple [t "B"; t "A"] *)
+        (* Tuple [Uncountable (true, "0"); Variant (["T"], bools)];
+        Tuple [Uncountable (true, "0"); Variant (["F"], bools)]; *)
+        (* Tuple [Uncountable (true, "0"); All]; *)
+        (* Tuple [All; Uncountable (true, "0")] *)
+    ];
+    Alcotest.fail("BOO")
+    (* inv_perm mycov |> List.map ~f: to_string |> String.concat ~sep: "; " |> Alcotest.fail *)
+)] *)
+
+(* let tests = Coverage_test.tests *)
 let tests = [
     "simple: ok", `Quick, test 
         ~code: {|
@@ -227,6 +309,26 @@ let tests = [
             ]
         });
 
+    "duplicate patterns: tuples ok", `Quick, test 
+        ~code: {|
+            let main n = {
+                n ? {
+                    | a, 0 -> ()
+                    | 0, b -> ()
+                    | c, d -> ()
+                }
+            }
+        |}
+        ~expect: (Success {
+            asserts = [
+                assert_ident_scheme "main.n" (Type.make_scheme [] Base_types.int);
+                assert_ident_scheme "main.a" (Type.make_scheme [] Base_types.int);
+                assert_ident_scheme "main.b" (Type.make_scheme [] Base_types.int);
+                assert_ident_scheme "main.c" (Type.make_scheme [] Base_types.int);
+                assert_ident_scheme "main.d" (Type.make_scheme [] Base_types.int);
+            ]
+        });
+
     "duplicate: nested", `Quick, test 
         ~code: {|
             let main n = {
@@ -290,6 +392,7 @@ let tests = [
                 n ? {
                     | 0, t -> ()
                     | u, 1 -> ()
+                    | _ -> ()
                 }
             }
         |}

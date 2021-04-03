@@ -3,161 +3,160 @@ open Base
 open Erro
 open Inferno
 
+module Coverage = struct 
+    type t = 
+        All 
+        | Value of (bool * StringSet.t)
+        | Tuple of t list
+        | Variant of (string * string list)
+        | List of (t list * bool)
 
-type coverage = Nothing | Everything | Something of value
-and value = 
-    | Tuple of coverage list
-    | List of {rest: coverage; coverages: list_coverage list}
-    | Variant of (string * coverage) list
-    | Uncountable of (string list)
-and list_coverage = NoListCoverage | ListCoverage of (coverage list)
-
-let rec coverage_to_string = function
-    | Nothing -> "<nothing>"
-    | Everything -> "_"
-    | Something (Tuple coverages) -> 
-        List.map coverages ~f: coverage_to_string 
-        |> String.concat ~sep:","
-        |> Util.Strings.surround "(" ")"
-    | Something (Uncountable values) -> 
-        String.concat values ~sep:"|"
-    | Something (List {rest; coverages}) -> 
-        let coverage_strs = List.map coverages ~f: (function
-            | NoListCoverage -> "<none>"
-            | ListCoverage items ->
-                List.map items ~f: coverage_to_string
-                |> String.concat ~sep: ";"
-                |> Util.Strings.surround "[" "]"
-        ) |> String.concat ~sep:"|" in
-        let rest_str = (match rest with
-            | Nothing -> ""
-            | Something _ -> (raise Unreachable) (* rest parameter shouldn't contain "something" *)
-            | Everything -> "..rest") 
-        in coverage_strs ^ rest_str
-    | Something (Variant _) -> "<TODO: variants>"
-
-let rec list_coverage_equals a b = match (a, b) with
-    | ListCoverage la, ListCoverage lb -> List.equal coverage_equals la lb
-    | NoListCoverage, NoListCoverage -> true
-    | _, _ -> false
-
-and coverage_equals a b = match (a, b) with
-    | Nothing, Nothing -> true
-    | Everything, Everything -> true
-    | Something sa, Something sb -> (match (sa, sb) with
-        | Tuple ta, Tuple tb -> List.equal coverage_equals ta tb
-        | List {coverages = a_coverages; rest = a_rest}, List {coverages = b_coverages; rest = b_rest} -> 
-            (List.equal list_coverage_equals a_coverages b_coverages) && (coverage_equals a_rest b_rest)
-        | Uncountable ua, Uncountable ub -> List.equal String.equal ua ub
-        | _, _ -> false
+    let product ~f a b = Util.Lists.flat_map a ~f:(fun ai ->
+        List.map b ~f: (fun bi -> f ai bi)
     )
-    | _, _ -> false
 
-let rec pattern_coverage pattern =
-    let open Node.Match in
-    match pattern with
-    | Any -> Everything
-    | Unit -> Something (Tuple [])
-    | Int i -> Something (Uncountable [i])
-    | Str s -> Something (Uncountable [s])
-    | Param _ -> Everything
-    | Tuple t -> Something (Tuple (List.map ~f: pattern_coverage t))
-    | List {items; rest; _} -> 
-        let len = List.length items in
-        let coverages = (List.init len ~f: (fun _ -> NoListCoverage)) 
-            @ [ListCoverage (List.map ~f: pattern_coverage items)] in
-        let rest = (match rest with | Some _ -> Everything | None -> Nothing) in
-        Something (List {coverages; rest})
+    let list_from ~rest items = List (items, rest)
+    let list_init size ~fill ~rest = list_from ~rest (List.init size ~f: (fun _ -> fill))
 
-let covers_everything list = not @@ List.exists list 
-    ~f: (function | Everything -> false | _ -> true)
+    let rec from_pattern pattern =
+        let open Node.Match in
+        match pattern with
+        | Any -> All
+        | Unit -> Tuple []
+        | Int i -> Value (false, Util.StringSet.from_list [i])
+        | Str s -> Value (false, Util.StringSet.from_list [s])
+        | Param _ -> All
+        | Tuple t -> Tuple (List.map ~f: from_pattern t)
+        | List {items; rest; _} -> 
+            list_from ~rest: (Option.is_some rest) (List.map items ~f: from_pattern)
 
-let rec merge_coverage base new' = 
-    match base, new' with 
-    | Something s, Nothing -> Something s
-    | Nothing, Something s -> Something s
-    | Everything, _-> Everything
-    | _, Everything -> Everything
-    | Something (Uncountable ua), Something (Uncountable ub) ->
-        let u' = Set.union (Set.of_list(module String) ua) (Set.of_list(module String) ub)
-            |> Set.to_list in
-        Something (Uncountable u')
-    | Something (List {coverages = base_coverages; rest = base_rest}), Something (List {coverages = new_coverages; rest = new_rest}) ->
-        let make_coverage i = function
-            | Everything -> ListCoverage (List.init i ~f: (fun _ -> Everything))
-            | Nothing -> NoListCoverage
-            | Something _ -> (raise Common.Unreachable)
-        in
-        let rec merge_lists' i = function
-        | [], [] -> []
-        | [], n :: nrest -> (merge_list_coverage (make_coverage i base_rest) n) :: (merge_lists' (i + 1) ([], nrest))
-        | b :: brest, [] -> (merge_list_coverage b (make_coverage i new_rest)) :: (merge_lists' (i + 1) (brest, []))
-        | b :: brest, n :: nrest -> (merge_list_coverage b n) :: (merge_lists' (i + 1) (brest, nrest))
-        in 
-        let coverages = merge_lists' 0 (base_coverages, new_coverages) in
-        let rest = merge_coverage base_rest new_rest in
-        Something (List {coverages; rest})
-    | Something (Tuple basetup), Something (Tuple newtup) ->
-        let merged = List.zip_exn basetup newtup |> List.map ~f: (fun (b, n) -> merge_coverage b n) in
-        (match covers_everything merged with
-            | true -> Everything
-            | false -> Something (Tuple merged)
-        )
-    | _, _ -> Nothing
-and merge_list_coverage a b = match (a, b) with
-    | ListCoverage a, ListCoverage b -> ListCoverage (List.zip_exn a b |> List.map ~f: (fun (a, b) -> merge_coverage a b))
-    | ListCoverage a, NoListCoverage -> ListCoverage a
-    | NoListCoverage, ListCoverage b -> ListCoverage b
-    | NoListCoverage, NoListCoverage -> NoListCoverage
+    let rec to_string = function 
+        | All -> "*"
+        | Value (exclude, set) -> 
+            let negate = if exclude then "!" else ""in
+            negate ^ (String.concat ~sep: "|" (Set.to_list set))
+        | Tuple t -> List.map t ~f:to_string 
+            |> String.concat ~sep: ", "
+            |> Util.Strings.surround "(" ")"
+        | List (li, rest) -> 
+            List.map li ~f:to_string 
+            |> String.concat ~sep: "; "
+            |> (fun conc -> conc ^ (if rest then " ..rest" else ""))
+            |> Util.Strings.surround "[" "]"
+        | Variant (vs, _) -> vs
 
-let rec simplify_coverage = function
-    | Nothing -> Nothing
-    | Everything -> Everything
-    | Something (Tuple coverages) -> 
-        let coverages' = List.map coverages ~f: simplify_coverage in
-        (match covers_everything coverages' with
-        | true -> Everything
-        | false -> Something (Tuple coverages'))
-    | Something (Uncountable values) -> Something (Uncountable values)
-    | Something (List {coverages; rest}) -> 
-        let coverages' = List.map coverages ~f: (function 
-            | NoListCoverage -> NoListCoverage 
-            | ListCoverage c -> ListCoverage (List.map c ~f: simplify_coverage)
-        ) in
-        (match rest with
-        | Something _ -> (raise Common.TODO)
-        | Nothing -> Something(List {coverages = coverages'; rest})
-        | Everything -> 
-            let squashed = List.fold_right coverages' ~init: [] ~f: (fun cov -> function
-                | [] -> (match cov with 
-                    | NoListCoverage -> [cov]
-                    | ListCoverage items -> 
-                        (match not @@ List.exists items ~f: (function 
-                            | Nothing -> true 
-                            | Something _ -> true 
-                            | Everything -> false
-                        ) with 
-                        | true -> []
-                        | false -> [cov]))
-                | r -> cov :: r) in
-            (match squashed with
-                | [] -> Everything
-                | coverages -> Something (List{coverages; rest}))
+    let list_to_string xs = List.map ~f:to_string xs |> String.concat ~sep: "; "
+
+    (* TODO: proper equality *)
+    let equals a b = String.equal (to_string a) (to_string b)
+
+    let rec invert = function
+        | All -> []
+        | Value (exclude, set) -> [Value (not exclude, set)]
+        | Tuple tup -> (invert_tuple tup)
+            |> List.map  ~f: (fun tup' -> Tuple tup')
+        | List (li, rest) ->
+            let len = List.length li in
+            let shorter = List.init len ~f: (fun size -> 
+                list_init size ~rest:false ~fill:(All)
+            ) in
+            let self = List.map (invert_tuple li) ~f: (list_from ~rest) in
+            let longer = if rest then [] else [
+                list_init ~rest:true ~fill: All (len + 1)
+            ] in
+            shorter @ self @ longer
+        | Variant (v, total) -> 
+            total 
+            |> List.filter ~f: (fun v' -> not @@ String.equal v' v) 
+            |> List.map ~f: (fun v' -> Variant(v', total))
+    and invert_tuple = function
+        | [] -> []
+        | head :: [] -> invert head |> List.map ~f: (fun a -> [a])
+        | head :: rest ->
+            let heads' = invert head in
+            let rests' = invert_tuple rest in
+            (product ~f: (fun a b -> a :: b) [head] rests')
+                @ (product ~f: (fun a b -> a :: b) heads' [rest])
+                @ (product ~f: (fun a b -> a :: b) heads' rests')
+
+    let rec intersect_lists a b = 
+        let matched = List.zip_exn a b |> List.map ~f:intersect in
+        if List.exists matched ~f: (Option.is_none) 
+        then None 
+        else Some (List.map ~f: (fun v -> Option.value_exn v) matched)
+
+    and intersect_lists_with_rests a b = 
+        let matched = Util.Lists.zipmap_default a b ~default: All ~f:(fun a b -> intersect(a, b)) in
+        if List.exists matched ~f: (Option.is_none) 
+        then None 
+        else Some (List.map ~f: (fun v -> Option.value_exn v) matched)
+
+    and intersect = function 
+        | s, All -> Some s
+        | All, s -> Some s
+        | Value (a_exclude, a_set), Value (b_exclude, b_set) ->
+            let include_set s = if Set.length s = 0 then None else Some (Value (false, s)) in
+            (match (a_exclude, b_exclude) with
+            | true, true ->
+                Some (Value (true, Set.union a_set b_set))
+            | false, false ->
+                include_set (Set.inter a_set b_set)
+            | true, false -> 
+                include_set (Set.diff b_set a_set)
+            | false, true -> 
+                include_set (Set.diff a_set b_set))
+        | Tuple a, Tuple b ->
+            Option.map (intersect_lists a b) ~f: (fun v -> Tuple v)
+        | Variant (a, set), Variant (b, _) ->
+            if String.equal a b then Some (Variant (a,set)) else None
+        | List (a, arest), List (b, brest) ->
+            let al = List.length a in
+            let bl = List.length b in
+            (match (arest, brest) with 
+                | false, false -> 
+                    if al = bl 
+                    then Option.map (intersect_lists a b) ~f: (fun v -> List(v, false))
+                    else None
+                | true, true ->
+                    Option.map (intersect_lists_with_rests a b) ~f: (fun v -> List (v, true))
+                | true, false ->
+                    if al <= bl then (
+                        Option.map (intersect_lists_with_rests a b) ~f: (fun v -> List (v, false))
+                    ) else None
+                | false, true ->
+                    if bl <= al then (
+                        Option.map (intersect_lists_with_rests a b) ~f: (fun v -> List (v, false))
+                    ) else None
+            )
+        | _, _ -> None
+
+    let merge os ns =
+        product ns os ~f: (fun bi ni ->
+            intersect (bi, ni)
         ) 
-    | Something (Variant _) -> (raise Common.TODO) 
+        |> List.filter_map ~f: (fun v -> v) 
+end
 
 let check_is_exhaustive matc =
     let errors = ref [] in
-    let result = List.fold Node.Match.(matc.cases) ~init: (Nothing) ~f: (fun result case ->
-        let covg = pattern_coverage case.pattern in
-        let result' = merge_coverage result covg 
-            |> simplify_coverage in
-        (if coverage_equals result result' then 
-            errors := !errors @ [UnusedMatchCase {range = Span.empty_range}]
-        );
-        result'
-    ) in
-    (if not @@ covers_everything [result] then 
+    let result = Option.value_exn (List.fold Node.Match.(matc.cases) ~init: (None) ~f: (fun result case ->
+        let coverage = Coverage.from_pattern case.pattern in
+        let uncovered = Coverage.invert coverage in
+        match result with 
+        | None -> Some uncovered 
+        | Some result -> 
+            ( match Coverage.merge result [coverage] with
+            | [] -> 
+                errors := !errors @ [UnusedMatchCase {range = Span.empty_range}];
+                Some result
+            | _ -> (
+                let result' = Coverage.merge result uncovered in
+                Some result'
+            ))
+    )) in
+    (match result with 
+    | [] -> ()
+    | _ -> 
         (* TODO: calculate missing cases *)
         errors := !errors @ [NonExhaustivePatternMatching {range = Span.empty_range; missing_cases=[]}]
     );
@@ -177,7 +176,7 @@ let matc ~ctx ~expr ~block_stmts m =
             let nested_unified = unify_structs item in
             (must_unify li.item_typ item) && nested_unified
         )
-        |> List.exists ~f: (fun ok -> not @@ ok) in
+        |> List.exists ~f: (fun ok -> not ok) in
 
         let rest_unified_error = Option.map li.rest ~f: (fun rest -> 
             let nested_unified = unify_structs rest in
