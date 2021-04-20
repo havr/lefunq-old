@@ -24,6 +24,8 @@ module Id = struct
         | mods -> "." ^ (String.concat ~sep: "." mods));
         id.name]
 
+    let empty = {source = ""; modules = []; name = ""}
+
     let equals a b = String.equal a.source b.source
         && (String.equal a.name b.name)
         && (List.equal String.equal a.modules b.modules)

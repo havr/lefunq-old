@@ -78,7 +78,7 @@ let resolve_ident ~ctx = function
             |> String.concat ~sep:".")
 
 let ident ~ctx n = 
-    let id = Option.value_exn Typed.Ident.(n.resolved.absolute) in
+    let id = Option.value_exn ~message: Typed.Ident.("No resolution for:" ^ n.resolved.given) Typed.Ident.(n.resolved.absolute) in
     (*TODO: epic kludge. introduce foreigns asap  *)
     if String.equal id.name "println" then begin 
         Ast.Ident.{value = ident_value "println"}
@@ -87,32 +87,26 @@ let ident ~ctx n =
     Ast.Ident.{value = (resolve_ident ~ctx @@ n.resolution @ [n.resolved])}
 
 let basic b =
-    if Typed.Type.equals Typed.Value.(b.type_) Typed.Base_types.str 
+    if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.str 
         then Ast.Expr.Str(Ast.Str.{value = b.value})
-    else if Typed.Type.equals Typed.Value.(b.type_) Typed.Base_types.int 
+    else if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.int 
         then Ast.Expr.Num(Ast.Num.{value = b.value})
-    else if Typed.Type.equals Typed.Value.(b.type_) Typed.Base_types.unit 
+    else if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.unit 
         then Ast.Expr.Void
-    else raise @@ Invalid_argument ("unexpected basic type: " ^ (Typed.Type.to_string b.type_) ^ "(has value: " ^ b.value ^ ")")
+    else raise @@ Invalid_argument ("unexpected basic type: " ^ (Typed.Type.to_string b.typ) ^ "(has value: " ^ b.value ^ ")")
 
 
 let rec apply ~ctx n = begin
-    let apply_seq ~ctx fn = function
-    | [] -> raise @@ Invalid_argument "apply has no arguments"
-    | first :: rest ->
-        let init = Dsl.apply fn [expr ~ctx first] in
-        Base.List.fold rest ~init: init ~f:(fun acc arg -> Dsl.apply acc [expr ~ctx arg]) 
-    in
     match Typed.Apply.(n.fn) with 
     | Typed.Expr.Ident m -> 
         (* TODO: !!FQN like!! import.value *)
         let local_name = (Option.value_exn m.resolved.absolute).name in
         if not @@ is_js_operator local_name then
-            apply_seq ~ctx (Ast.Expr.Ident (ident ~ctx m)) n.args
+            Convert_apply.convert ~expr: (expr ~ctx) n (Ast.Expr.Ident (ident ~ctx m))
         else begin
             match n.args with
-            | [unary] -> Ast.Expr.Unary (Ast.Unary.{op = local_name; expr = expr ~ctx unary})
-            | [left; right] ->
+            | [PosArg unary] -> Ast.Expr.Unary (Ast.Unary.{op = local_name; expr = expr ~ctx unary.expr})
+            | [PosArg left; PosArg right] ->
                 let wrap_parens node = match node with 
                 | Ast.Expr.Binary b -> 
                     if get_precedence (b.op) < get_precedence (local_name) then
@@ -120,12 +114,41 @@ let rec apply ~ctx n = begin
                     else node
                 | _ -> node
                 in
-                let left_ast = wrap_parens @@ expr ~ctx left in
-                let right_ast = wrap_parens @@ expr ~ctx right in
+                let left_ast = wrap_parens @@ expr ~ctx left.expr in
+                let right_ast = wrap_parens @@ expr ~ctx right.expr in
                 Ast.Expr.Binary(Ast.Binary.{op = local_name; left = left_ast; right = right_ast})
             | _ -> raise Unreachable
         end
-    | _ -> apply_seq ~ctx (expr ~ctx n.fn) n.args
+    | fn -> 
+        Convert_apply.convert ~expr: (expr ~ctx) n (expr ~ctx fn)
+        (* input type Int -> Int -> Int
+        (* each arg swallows the signature *)
+        (* if the order *)
+        (* get initial signature *)
+        f a b c d = (a) => (b) => (c) => d
+
+
+        in let conv' = Typed.Node.Expr.typ n.fn in
+            List.fold m.args ~init: conv' ~f: (fun covg -> function
+                | Typed.Node.Apply.PosArg p ->
+
+                | Typed.Node.Apply.NameArg p ->
+            )
+        let wrap_sig = 
+            |> List.map ~f: (function 
+                | PosArg {expr} ->
+                | 
+            )
+
+
+        let fn = expr ~ctx n.fn in 
+        let loop lam = function
+            | Typed.Node.Apply.PosArg {expr = e} -> 
+                expr ~ctx e
+            | Typed.Node.Apply.NameArg {expr = e} -> 
+                let (typ, rest) = Typed.Type.Lambda.split_head lam in
+        in
+        apply_seq ~ctx (expr ~ctx n.fn) n.args *)
 
 end and expr ~ctx  = function
     | Typed.Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (expr ~ctx))
@@ -164,18 +187,62 @@ and cond ~ctx n =
 
 and lambda_like ~ctx params bl =  
     let open Base in
-    match List.rev @@ params with
+    let tv = Convert_util.tempvar () in
+    let optional name default = 
+        let v = tv() in
+        let present, default = (match default with
+        | None -> (raise Common.TODO)
+            (* const a = (temp_param != null) ? Some(temp_param) : None; *)
+        | Some value -> 
+            (Ast.Expr.Ident (Ast.Ident.make v), expr ~ctx value)
+            (* const a = (temp_param != null) ? temp_param : default_value *)
+        ) in
+        let null_check = Ast.Expr.Binary (Ast.Binary.make "==" (Ast.Expr.Ident (Ast.Ident.make v)) (Ast.Expr.Ident (Ast.Ident.make "null"))) in
+        let cond = Ast.Expr.Ternary (Ast.Ternary.make null_check default present) in
+        let const = Ast.Block.Const (Ast.Const.expr name cond) in
+        (const, v)
+    in
+    match params with
     | [] -> raise (Invalid_argument "lambda without arguments")
-    | first :: rest -> 
-        let convert_arg = function
-            | Typed.Param.Name n -> [n.resolved]
-            | Typed.Param.Tuple _ -> raise Common.TODO
+    | params -> 
+        (* lambda params -> signature, defaults *)
+        let rec destruct_tuple acc pos param = 
+            let curr_acc = Ast.Expr.Index (Ast.Index.make acc (Ast.Expr.Num (Ast.Num.from_int pos))) in
+            match param with
+            | Typed.Param.Name n -> 
+                [n.scope, curr_acc]
+            | Typed.Param.Tuple tup -> 
+                List.mapi tup ~f: (destruct_tuple curr_acc)
+                |> Util.Lists.flatten
             | Typed.Param.Unit -> []
         in
-        let inner_lambda = Ast.Lambda.{params = convert_arg Typed.Param.(first.shape); block = block ~ctx Typed.Block.(bl.stmts)} in
-        Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner arg -> 
-            Ast.Lambda.{params = convert_arg arg.shape; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
-        ) rest)
+        let destruct, params = List.fold_map params ~init: [] ~f: (fun destruct param -> match Typed.Param.(param.value) with 
+            | Typed.Param.Positional {pattern = Typed.Param.Unit } ->
+                (destruct, "")
+            | Typed.Param.Positional {pattern = Typed.Param.Name n} -> 
+                (destruct, n.scope)
+            | Typed.Param.Positional {pattern = Typed.Param.Tuple tup} -> 
+                let acc = tv () in
+                let id = Ast.Expr.Ident (Ast.Ident.make acc) in
+                let destruct = List.mapi tup ~f: (destruct_tuple id)
+                |> Util.Lists.flatten
+                |> List.map ~f:(fun (name, value) ->
+                    Ast.Block.Const (Ast.Const.make name (Ast.Const.Expr (value)))
+                ) in
+                (destruct, acc)
+            | Typed.Param.Named {name} -> destruct, name.scope
+            | Typed.Param.Optional {name; default} -> 
+                let const, params = optional name.scope default in
+                (destruct @ [const], params)
+            | Typed.Param.Extension _ -> (raise Common.TODO)
+        ) in
+        let bl = block ~ctx Typed.Block.(bl.stmts) in
+        let bl' = Ast.Block.{stmts = destruct @ bl.stmts} in
+        Ast_util.Lambda.curried (params) (Ast.Expr.Block (bl'))
+        (* let inner_lambda = Ast.Lambda.{params = convert_pattern Typed.Param.(first.value); block = block ~ctx Typed.Block.(bl.stmts)} in
+        Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner param -> 
+            Ast.Lambda.{params = convert_pattern param.value; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
+        ) rest) *)
 and lambda ~ctx n = lambda_like ~ctx Typed.Lambda.(n.params) n.block
 
 and block_stmt ~ctx = function
@@ -231,7 +298,7 @@ and exposed_entries exposed =
 and modu ~ctx n =
     let exposed = exposed_entries n.exposed in
     let modu = modu_entries ~ctx n.entries in
-    Ast.const_block Typed.Module.(n.scope_name) (modu @ [exposed])
+    Ast.Const.block Typed.Module.(n.scope_name) (modu @ [exposed])
 
 let module_exports ~ctx root = 
     (Typed.Node.Module.(root.exposed)
@@ -270,3 +337,10 @@ let module_exports ~ctx root =
 let root_module ~ctx root = 
     modu_entries ~ctx (Typed.Node.Module.(root.entries)) 
         @ (module_exports ~ctx root)
+
+(*
+    apply order:
+    const a = 1 //idx = expr
+    const b = 2 //idx = expr
+    const f = f' (b) (a)
+*)

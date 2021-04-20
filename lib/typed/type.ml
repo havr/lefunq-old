@@ -1,12 +1,20 @@
 open Common
 open Base
 
-type t = Var of string 
+type named_param = 
+    {is_optional: bool; name: string; named_typ: t}
+
+and param = 
+    | PosParam of t
+    | NamedParam of named_param
+    | NamedBlock of named_param list
+and t = Var of string 
     | Simple of (string * t list)
-    | Lambda of (t * t)
+    | Lambda of (param * t)
     | Tuple of (t list)
     | Unit
     | Unknown
+    | Invalid
 
 type constr = (string)
 
@@ -14,6 +22,7 @@ type scheme = {
     constr: constr list;
     typ: t;
 }
+
 
 let make_scheme constr typ = {constr; typ}
 
@@ -23,14 +32,15 @@ let lambda ?(constr=[]) args =
     let rec make_typ = function
     | [] -> raise (Unreachable)
     | typ :: [] -> typ
-    | typ :: rest -> Lambda (typ, make_typ rest)
+    | typ :: rest -> Lambda (PosParam (typ), make_typ rest)
 
 in make_scheme constr (make_typ args)
 
 let rec to_string = function
 | Unit -> "()"
+| Invalid -> "<invalid>"
 | Unknown -> "<unknown>"
-| Var v -> "?" ^ v
+| Var v -> v
 | Simple (v, params) -> 
     let str_params = (match params with 
     | [] -> "" 
@@ -44,12 +54,24 @@ let rec to_string = function
     |> String.concat ~sep: ", " in
     "(" ^ concat ^ ")"
 | Lambda (v, n) ->
-    let vs = match v with
-        | Lambda _ -> "(" ^ (to_string v) ^ ")" 
-        | _ -> to_string v
+    let pos = function
+        | Lambda lam -> "(" ^ (to_string (Lambda lam)) ^ ")"
+        | p -> to_string p
+    in
+    let named_param {is_optional; name; named_typ} = 
+        (if is_optional then name ^ "?" else name) ^ ":" ^ (pos named_typ)
+    in
+    let param = function
+        | PosParam p -> pos p
+        | NamedParam b -> 
+            named_param b 
+        | NamedBlock b -> (
+            List.map ~f: (named_param) b 
+                |> String.concat ~sep:" -> "
+        )
     in
     let ns = to_string n  in
-    vs ^ " -> " ^ ns
+    (param v) ^ " -> " ^ ns
 
 let scheme_to_string scheme =
     let constrs = match scheme.constr with
@@ -74,12 +96,16 @@ let rec equals a b = match (a, b) with
             |> List.length in
         count_equals = List.length av
     else false
-| (Lambda (ah, at), Lambda (bh, bt)) ->
+| (Lambda (PosParam ah, at), Lambda (PosParam bh, bt)) ->
     equals ah bh && equals at bt
+| (Lambda (NamedBlock ab, at), Lambda (NamedBlock bb, bt)) ->
+    (List.equal phys_equal ab bb) && equals at bt
 | Unit, Unit -> true
+| Invalid, Invalid -> true
 | _, _ -> false
 
 let rec free_vars = function
+| Invalid -> Set.empty (module String)
 | Unit -> Set.empty (module String)
 | Unknown -> Set.empty (module String)
 | Simple _  -> Set.empty (module String)
@@ -87,7 +113,14 @@ let rec free_vars = function
 | Var v -> Set.singleton (module String)  v
 | Tuple t -> List.fold t ~init: (Set.empty (module String)) ~f: 
     (fun result typ -> Set.union result (free_vars typ))
-| Lambda (a, b) -> Set.union (free_vars a) (free_vars b)
+| Lambda ((PosParam a), b) -> Set.union (free_vars a) (free_vars b)
+| Lambda ((NamedParam p), b) -> 
+    free_vars p.named_typ
+    |> Set.union (free_vars b)
+| Lambda ((NamedBlock a), b) -> 
+    List.map a ~f: (fun p -> free_vars p.named_typ)
+    |> List.fold ~init: (Set.empty(module String)) ~f: (Set.union)
+    |> Set.union (free_vars b)
 
 let lists_equal compare a b =
     List.length a = List.length b
@@ -101,13 +134,32 @@ let scheme_equals a b =
     equals a.typ b.typ && lists_equal (String.compare) a.constr b.constr
 
 module Lambda = struct 
-    let rec unroll (arg, ret) =
+    (* let rec unroll (arg, ret) =
         match ret with
         | Lambda ret -> arg :: (unroll ret)
-        | t -> [arg; t]
+        | t -> [arg; t] *)
 
-    let rec make = function 
-    | [] -> raise (Invalid_argument "making a lambda with no arguments")
-    | h :: [] -> h
-    | h :: t -> Lambda (h, make t)
+    let make_positional args = 
+        let rec loop = function 
+            | [] -> raise (Invalid_argument "making a lambda with no arguments")
+            | h :: [] -> h 
+            | h :: t -> Lambda (PosParam h, loop t)
+        in loop args
+
+    let make args result = 
+        let rec loop = function 
+            | [] -> raise (Invalid_argument "making a lambda with no arguments")
+            | h :: [] -> Lambda(h, result)
+            | h :: t -> Lambda (h, loop t)
+        in loop args
+
+    let split_head (param, next) =
+        match param with
+        | PosParam p -> (`PosParam p, next)
+        | NamedParam p -> (`NamedParam p, next)
+        | NamedBlock (h :: rest) -> 
+            (`NamedParam h, match rest with 
+                | [] -> next 
+                | t -> Lambda (NamedBlock(t), next))
+        | NamedBlock [] -> (raise Common.Unreachable)
 end

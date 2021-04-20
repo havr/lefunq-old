@@ -139,56 +139,56 @@ module Frontend = struct
     ]
 
     let convert_typed_error file = function
-    | Typed.Erro.UndeclaredIdentifier { given_name; range } ->
+    | Typed.Errors.UndeclaredIdentifier { given_name; range } ->
         Common.Err.{
             file; 
             range;
             msg = "Undeclared identifier: " ^ given_name;
             context = None
         }
-    | Typed.Erro.TypeMismatch { type_expected; type_provided; range } ->
+    | Typed.Errors.TypeMismatch { type_expected; type_provided; range } ->
         Common.Err.{
             file;
             range;
             msg = "Unexpected type: " ^ (Typed.Type.to_string type_provided) ^ " expecting " ^ (Typed.Type.to_string type_expected);
             context = None
         }
-    | Typed.Erro.PatternMismatch {expected; unexpected; range } ->
+    | Typed.Errors.PatternMismatch {expected; unexpected; range } ->
         Common.Err.{
             file;
             range;
             msg = "Pattern mismatch: " ^ (Typed.Type.to_string unexpected) ^ " expecting " ^ (Typed.Type.to_string expected);
             context = None
         }
-    | Typed.Erro.NotFunction { type_provided; range } ->
+    | Typed.Errors.NotFunction { type_provided; range } ->
         Common.Err.{
             file;
             range;
             msg = "Is not a function: " ^ (Typed.Type.to_string type_provided);
             context = None
         }
-    | Typed.Erro.IgnoredResult { unexpected; range } ->
+    | Typed.Errors.IgnoredResult { unexpected; range } ->
         Common.Err.{
             file;
             range;
             msg = "Ignored result: " ^ (Typed.Type.to_string unexpected);
             context = None
         }
-    | Typed.Erro.IfTypeMismatch { unexpected; range } ->
+    | Typed.Errors.IfTypeMismatch { unexpected; range } ->
         Common.Err.{
             file;
             range;
             msg = "If type mismatch: " ^ (Typed.Type.to_string unexpected);
             context = None
         }
-    | Typed.Erro.BranchTypeMismatch { unexpected; expected; range } -> 
+    | Typed.Errors.BranchTypeMismatch { unexpected; expected; range } -> 
         Common.Err.{
             file;
             range;
             msg = "The branch doesn't match. Unexpected " ^ (Typed.Type.to_string unexpected) ^ " expecting " ^ (Typed.Type.to_string expected);
             context = None
         }
-    | Typed.Erro.ListItemTypeMismatch { unexpected; expected; range } -> 
+    | Typed.Errors.ListItemTypeMismatch { unexpected; expected; range } -> 
         Common.Err.{
             file;
             range;
@@ -196,7 +196,7 @@ module Frontend = struct
             context = None
         }
         (* TODO:s/list/imports or chains *)
-    | Typed.Erro.CyclicDependency { caused_by; list } -> 
+    | Typed.Errors.CyclicDependency { caused_by; list } -> 
         let rec print_imports = function
         | [] -> raise Common.Unreachable
         | a :: [] -> "\t" ^ a
@@ -209,46 +209,60 @@ module Frontend = struct
             msg = "Cyclic dependency: " ^ (caused_by.value) ^ " imports\n" ^ (print_imports list);
             context = None
         }
-    | Typed.Erro.SourceNotFound {source} -> 
+    | Typed.Errors.SourceNotFound {source} -> 
         Common.Err.{
             file;
             range = source.range;
             msg = "Source not found: " ^ (source.value);
             context = None
         }
-    | Typed.Erro.SourceSymbolNotFound {symbol; _} -> 
+    | Typed.Errors.SourceSymbolNotFound {symbol; _} -> 
         Common.Err.{
             file;
             range = symbol.range;
             msg = "Symbol not found: " ^ (symbol.value);
             context = None
         }
-    | Typed.Erro.SourceSystemError {source} -> 
+    | Typed.Errors.SourceSystemError {source} -> 
         Common.Err.{
             file;
             range = source.range;
             msg = "A system error occured when reading source: " ^ (source.value);
             context = None
         }
-    | Typed.Erro.SourceCompileError {source} -> 
+    | Typed.Errors.SourceCompileError {source} -> 
         Common.Err.{
             file;
             range = source.range;
             msg = "A source contains errors:" ^ (source.value);
             context = None
         }
-    | Typed.Erro.UnusedMatchCase {range} -> 
+    | Typed.Errors.UnusedMatchCase {range} -> 
         Common.Err.{
             file;
             range = range;
             msg = "This match case is unused";
             context = None
         }
-    | Typed.Erro.NonExhaustivePatternMatching {range; missing_cases} -> 
+    | Typed.Errors.NonExhaustivePatternMatching {range; missing_cases} -> 
         Common.Err.{
             file;
             range = range;
             msg = "This match pattern matching is not exhaustive. Unused cases:" ^ (missing_cases |> String.concat ~sep: "\n");
+            context = None
+        }
+    | CannotApplyWithLabel{range; label; lambda} -> 
+        Common.Err.{
+            file;
+            range = range;
+            msg = (String.concat ~sep: " " ["Lambda contains only positional arguments. Cannot apply with label"; Span.range_str range; "Label:"; label; Typed.Type.to_string lambda]); 
+            context = None
+        }
+    | CannotApplyWithoutLabel{range; lambda} -> 
+        Common.Err.{
+            file;
+            range = range;
+            msg = (String.concat ~sep: " " ["Lambda contains only positional arguments. Cannot apply without a label:"; Span.range_str range; Typed.Type.to_string lambda]);
             context = None
         }
 
@@ -436,7 +450,10 @@ module JsBackend = struct
                     )
                 | Apply app -> 
                     expr app.fn;
-                    List.iter app.args ~f:expr
+                    List.iter app.args ~f: (function 
+                        | PosArg{expr = e} -> expr e
+                        | NameArg{expr = e; _} -> expr e
+                    )
                 | Lambda lam -> block lam.block
                 | Match m -> (* TODO: visit pattern *)
                     (expr m.expr);
@@ -465,20 +482,9 @@ module JsBackend = struct
         } in
         let str value = Js.Ast.Str.{value} in
         let require name = call "require" [Js.Ast.Expr.Str (str name)] in
-        let const name expr = 
-            Js.Ast.Const.{name; expr = match expr with
-            | `Block b -> Js.Ast.Const.Block b
-            | `Expr e -> Js.Ast.Const.Expr e}
-        in let nodes = List.map deps ~f: (fun (name, var_name) -> const var_name (`Expr (Js.Ast.Expr.Apply (require name)))) in
+        let nodes = List.map deps ~f: (fun (name, var_name) -> 
+            Js.Ast.Const.expr var_name (Js.Ast.Expr.Apply (require name))) in
         (nodes, deps)
-
-    (* let write_exposed backend exposed = 
-        Map.iteri exposed ~f:(fun ~key ~data ->
-            (* If module exposes foreign stuff, it should be correctly re-exposed*)
-            match Typed.Symbol.Module.(data.binding) with
-            | None -> ()
-            | Some b -> Js.Ast.Printer.str ("exports." ^ (Js.Convert.ident_value key) ^ " = " ^ Js.Convert.ident_value b.id.name ^ "\n") backend.printer;
-        ) *)
 
     let write_bindings backend source content = 
         let open Js.Ast.Printer in
@@ -501,8 +507,9 @@ module JsBackend = struct
         } in
         let body = Js.Convert.root_module ~ctx node in
         Js.Ast.Printer.str (module_header source) backend.printer;
-        List.iter requires ~f: (fun require -> Js.Ast.Prn.const require backend.printer);
-        List.iter body ~f: (fun node -> Js.Ast.Prn.stmt node backend.printer);
+        Js.Ast.Prn.stmts (List.map requires ~f: (fun require -> Js.Ast.Block.Const require)) backend.printer;
+        Js.Ast.Prn.stmts body backend.printer;
+        Js.Ast.Printer.newline backend.printer;
         (* write_exposed backend node.exposed; *)
         Js.Ast.Printer.str module_trailer backend.printer;
         Js.Ast.Printer.str "\n" backend.printer
@@ -529,7 +536,7 @@ let make ~fs in_ out =
         in
         (* strip path / filename without ext *)
         (* does $filename.js file exist. if so, read it and attach *)
-        Common.log[Pp.to_string [Typed.Node.Module.pretty_print root]];
+        Common.log[Pp.to_string [Typed.Node.Print_node.modu root]];
         JsBackend.write_source ~bindings backend source root 
     ) in_ with
     | Ok _ ->

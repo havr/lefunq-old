@@ -113,7 +113,7 @@ module Lexer = struct
 
     exception Panic of string
 
-    let lexeme_of map state state' =
+    let lexeme_of mapper state state' =
         if not @@ phys_equal State.(state.stream) State.(state'.stream) then
             raise (Panic "states don't match")
         else Span.{
@@ -121,7 +121,7 @@ module Lexer = struct
                 start = state.pos;
                 end' = State.(state'.pos)
             };
-            value = map(String.sub State.(state.stream) ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx))
+            value = mapper (String.sub State.(state.stream) ~pos: state.pos.idx ~len: State.(state'.pos.idx - state.pos.idx))
         }        
 
     let next config state = 

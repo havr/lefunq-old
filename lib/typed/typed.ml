@@ -28,32 +28,66 @@ module Symbol = Symbol
 module Resolver = Resolver
 module Param = Param
 module Base_types = Base_types
-module Error = Error 
 module Resolve = Resolve
 module Transform = Transform
-module Erro = Erro
+module Errors = Errors
 module Util = Util
 module Infer_match = Infer_match
+
+module MyApply = struct 
+
+    open Type 
+
+    let rec lambda label = function
+        | Lambda (from, to') ->
+            let next () = lambda label to'
+                |> Option.map ~f: (fun (result, next') -> (result, Lambda (from, next')))
+            in
+            (match (label, from) with
+            | "", PosParam p -> Some (p, to')
+            | "", NamedParam p ->
+                Common.log["=="; p.name; label];
+                next()
+            | _, PosParam _  -> 
+                next()
+            | label, NamedParam p -> 
+                if (String.equal p.name label) 
+                then (Some (p.named_typ, to')) 
+                else next()
+            | _, NamedBlock _ -> (raise Common.TODO) )
+        | _ -> None
+
+end
 
 (* TODO: move somewhere *)
 module Infer = struct 
     open Inferno
-    open Erro
+
+    let unify_var ~ctx ~typ ~range expr ~f = 
+        let unified = f expr in
+        ignore @@ do_unify ~ctx ~error: (TypeMismatch {
+            range = range;
+            type_expected = typ;
+            type_provided = unified;
+        }) typ unified;
+        unified
+
+    let unify_result = unify_var
 
     (* TODO: get rid of ctx everywhere. it's a really bad idea. rly? it seems it's awesome *)
-    let rec cond ~ctx n =
+    let rec cond ~ctx n = 
         let infer_case ~ctx unify_with case' =
             let infered_if = block ~ctx Node.Cond.(case'.if_) in
             let errors = unify_ctx ~ctx Base_types.bool infered_if in
             if List.length errors > 0 then 
-                ctx_add_errors ~ctx [IfTypeMismatch { range = Block.last_stmt_range case'.if_; unexpected = infered_if }];
+                ctx_add_errors ~ctx [Errors.IfTypeMismatch { range = Block.last_stmt_range case'.if_; unexpected = infered_if }];
                 
             let infered_then = block ~ctx case'.then_ in
             match unify_with with
             | Some t ->
                 let errors = unify_ctx ~ctx t infered_then in
                 if List.length errors > 0 then begin
-                    ctx_add_errors ~ctx [BranchTypeMismatch {
+                    ctx_add_errors ~ctx [Errors.BranchTypeMismatch {
                         range = Block.last_stmt_range case'.if_;
                         expected = t;
                         unexpected = infered_then
@@ -69,7 +103,7 @@ module Infer = struct
             let errors = unify_ctx ~ctx unify_with infered_else in
             if List.length errors > 0 then begin 
                 ctx_add_errors ~ctx [
-                    BranchTypeMismatch {
+                    Errors.BranchTypeMismatch {
                         range = Block.last_stmt_range else_;
                         expected = unify_with;
                         unexpected = infered_else;
@@ -120,45 +154,40 @@ module Infer = struct
 
     and block ~ctx block = block_stmts ~ctx Block.(block.stmts)
 
+    and infer_default_params ~ctx params = List.map params ~f: (fun Param.{typ; value} -> match value with
+        | Param.Optional {default = e; _} -> Option.map e ~f: (fun e ->
+            let default_typ = expr ~ctx e in
+            (* TODO: check unification order *)
+            do_unify ~ctx typ default_typ ~error: (
+                Errors.TypeMismatch {
+                    range = (Expr.range e);
+                    type_expected = typ;
+                    type_provided = default_typ
+                };
+            )
+        )
+        | _ -> None;
+    ) 
+
     and lambda ~ctx lam =
         (* here all args are either untyped or have resolved values (or errors???)*)
         (* TODO: add *)
         (* TODO: result struct instead of this crappy tuple *)
         (* let env_with_args = Lambda.(lam.args) |> *)
-        let typ = block ~ctx Lambda.(lam.block) in
-        let as_list = List.map lam.params ~f: (fun param -> param.type') in
-        (* TODO: Type.lambda and Type.lambda_scheme *)
-        let with_result = Type.lambda (as_list @ [typ]) in
-        with_result.typ
-
-
-    and ident_expr ~ctx m =
-        (* TODO: error vars *)
-        let instantiate_scheme scheme =
-            let new_substs = List.fold 
-                Type.(scheme.constr) 
-                ~init: Subst.empty_subst 
-                ~f: (fun substs var_name ->
-                    Subst.add_subst substs var_name (ctx.tempvar())
-            ) in 
-            Subst.apply_substs new_substs scheme.typ 
-        in
-        match Ident.(m.scheme) with
-        | Some s -> 
-            instantiate_scheme s
-        | None -> match m.resolved.absolute with
-            | None ->
-                (* TODO: error node? *)
-                ctx.tempvar()
-            | Some {name=name; source=""; _} -> 
-                begin match Map.find ctx.env (name) with
-                | Some s -> 
-                    instantiate_scheme s
-                | None -> 
-                    raise Common.TODO (* TODO: spawn error var? *)
-                end
-            | Some {name=_; source=_; _} -> 
-                raise Common.TODO (* TODO: spawn error var? *)
+        ignore @@ infer_default_params ~ctx Lambda.(lam.params);
+        let block_result = block ~ctx Lambda.(lam.block) in
+        let rec loop = function
+        | Type.Lambda (_, to') -> loop to'
+        | lam_result -> ignore @@ do_unify ~ctx block_result lam_result ~error: (
+            (* TODO: what really to report? is it error of the last statement or the while block *)
+            Errors.TypeMismatch {
+                range = Lambda.(lam.range);
+                type_expected = lam_result;
+                type_provided = block_result
+            });
+        in loop lam.typ;
+        (* should we do something with result? *)
+        lam.typ
 
     and binding ~ctx n =
         (* TODO: unify them *)
@@ -166,11 +195,13 @@ module Infer = struct
             let result = ctx.tempvar() in
             (* two env' in same scope. wtf *)
             set_env ~ctx n.scope_name (Type.make_scheme [] result);
+            ignore @@ infer_default_params ~ctx n.params;
             let b = block ~ctx Let.(n.block) in
             (* TODO: unify with let type *)
             (* TOOD: really, how about not @ Map.mem?  *)
             set_env ~ctx n.scope_name (Type.make_scheme (free_vars ~ctx b) result);
         else begin 
+            ignore @@ infer_default_params ~ctx n.params;
             let typ = block ~ctx Let.(n.block) in
             (* TODO: unify with let type *)
             (* TOOD: really, how about not @ Map.mem?  *)
@@ -179,72 +210,154 @@ module Infer = struct
         end
 
 
-    and tuple_expr ~ctx t = match Tuple.(t.exprs) with
+    and tuple_expr ~ctx t = 
+        match Tuple.(t.exprs) with
         | [] -> Base_types.unit
         | single :: [] -> expr ~ctx single
         | exprs ->
              Type.Tuple (List.map exprs ~f:(fun node ->
              (* why do we need to apply substs? *)
-                let e = expr ~ctx node in apply_substs ~ctx e
+                let e = expr ~ctx node in apply~ctx e
             ))
 
+    and new_apply ~ctx ~expr app =
+        let step ~range var arg = 
+            let label, e = (match arg with
+                | Apply.PosArg {expr = e} ->
+                    "", e
+                | Apply.NameArg {expr = e; name} ->
+                    name.value, e
+            ) in
+            let (from, to') = match var with
+                | Type.Var v ->
+                    let from_typ = ctx.tempvar() in
+                    let result = ctx.tempvar() in
+                    let src = (match label with
+                        | "" -> Type.PosParam (from_typ)
+                        | label -> Type.NamedParam {is_optional = false; name = label; named_typ = from_typ}
+                    ) in
+                    add_subst ~ctx v (Type.Lambda (src, result));
+                    (from_typ, result)
+                | Type.Lambda lam -> 
+                    (match MyApply.lambda label (Type.Lambda lam) with
+                        | Some r -> r
+                        | None -> 
+                            add_error ~ctx (match label with
+                            | "" -> Errors.CannotApplyWithoutLabel {
+                                range = Expr.range e;
+                                lambda = Type.Lambda lam;
+                            }
+                            | label -> Errors.CannotApplyWithLabel {
+                                    range = Expr.range e;
+                                    label = label;
+                                    lambda = Type.Lambda lam;
+                                }
+                            );
+                            (Type.Invalid, Type.Invalid)
+                        )
+                | t -> (
+                    add_error ~ctx (
+                        NotFunction {
+                            range = range;
+                            type_provided = t
+                        }
+                    );
+                    Type.Invalid, Type.Invalid
+                )
+            in
+            let expr_typ = expr e in
+            ignore @@ do_unify ~ctx from expr_typ ~error: (
+                TypeMismatch {
+                    range = Expr.range e;
+                    type_expected = from;
+                    type_provided = expr_typ
+                }
+            );
+            Subst.apply ctx.substs to'
+        in 
+        let fn_typ = expr Apply.(app.fn) in
+        let app_typ, _ = List.fold Apply.(app.args) ~init: (fn_typ, (Expr.range app.fn)) ~f: (fun (typ, range) arg -> 
+            let typ' = step ~range typ arg in
+            let range' = Span.merge range (Node.Apply.arg_range arg) in
+            (typ', range')
+        ) in app_typ
+
     and apply_var ~ctx v m = 
-        let nodes = List.map Apply.(m.args) ~f: (expr ~ctx) in
         let result = ctx.tempvar() in
-        let lam = (Type.lambda (nodes @ [result])).typ in
+        let rec mk = function
+            | [] -> result
+            | arg :: rest -> Type.Lambda (arg, mk rest)
+        in 
+        let lam = mk @@ List.map Node.Apply.(m.args) ~f: (function 
+            | PosArg {expr = e} -> Type.PosParam (expr ~ctx e)
+            | NameArg {name; expr = e} -> Type.NamedParam {is_optional = false; name = name.value; named_typ = expr ~ctx e}
+        ) in
         add_subst ~ctx v lam;
-        result;
+        result
 
-    and apply_lambda ~ctx lam m = 
+    and apply_lambda ~ctx lam m =
         let rec do' = function
-        | arg :: args, Type.Lambda (from, to') -> begin
-            let node_typ = expr ~ctx arg in
-            let unify_errors = unify_ctx ~ctx (apply_substs ~ctx from) node_typ in
-            if List.length unify_errors > 0 then begin
-                ctx_add_errors ~ctx [
-                    TypeMismatch {
-                        range = Expr.range arg;
-                        type_expected = from;
-                        type_provided = node_typ
-                    }
-                ]
-            end;
-
-            match args with
-            | [] -> Some to'
-            | next_args -> do' (next_args, to')
+        | arg :: args, (Type.Lambda _ as lam) -> begin
+            let result = (match arg with
+            | Apply.PosArg {expr = e} ->
+                (match MyApply.lambda "" lam with
+                    | Some (typ, rest) -> Ok (e, typ, rest)
+                    | None -> Error (Errors.CannotApplyWithoutLabel{
+                        range = Expr.range e;
+                        lambda = lam;
+                    })
+                )
+            | Apply.NameArg {name; expr = e} ->
+                (match (MyApply.lambda name.value lam) with
+                    | Some (typ, rest) -> Ok (e, typ, rest)
+                    | None -> Error (Errors.CannotApplyWithLabel{
+                        range = Expr.range e;
+                        label = name.value;
+                        lambda = lam;
+                    }))) in
+            (match result with 
+                | Ok (e, typ, rest) -> 
+                    let node_typ = expr ~ctx e in
+                    ignore @@ do_unify ~ctx (apply~ctx typ) node_typ ~error: (
+                        TypeMismatch {
+                            range = Expr.range e;
+                            type_expected = typ;
+                            type_provided = node_typ
+                        }
+                    );
+                    (match args with
+                    | [] -> Some rest
+                    | next_args -> do'(next_args, rest))
+                | Error e -> 
+                    ctx_add_errors ~ctx [e];
+                    Some (Type.Unknown) (* TODO: handle this case *)
+            );
         end
         | args, t ->
             ctx_add_errors ~ctx [
                 NotFunction {
                     range = Span.merge 
-                        (Expr.range @@ List.hd_exn args)
-                        (Expr.range @@ List.last_exn args);
+                        (Node.Apply.arg_range @@ List.hd_exn args)
+                        (Node.Apply.arg_range @@ List.last_exn args);
                     type_provided = t
                 }
             ];
             (* possible source of bugs. check the behaviour in production *)
-            List.iter args ~f:(fun node ->
-                ignore @@ expr ~ctx node
+            List.iter args ~f:(function
+                | PosArg {expr = e} ->  ignore @@ expr ~ctx e
+                | NameArg {expr = e; _} ->  ignore @@ expr ~ctx e
             );
             Some t
         in
         do' (Apply.(m.args), Type.Lambda lam) 
             |> Option.value ~default: (Type.Unknown)
 
-    and apply_expr ~ctx m =
-        match expr ~ctx Apply.(m.fn) with
-        | Type.Var v -> apply_var ~ctx v m
-        | Type.Lambda lam -> apply_lambda ~ctx lam m
-        | t ->
-            let err = NotFunction{
-                range = Expr.range m.fn;
-                type_provided=t
-            } in
-            ctx_add_errors ~ctx [err];
-            (Type.Var "")
+    and apply_expr ~ctx m = unify_var ~ctx ~typ:Apply.(m.typ) ~range: (m.range) m ~f:(fun m ->
+        new_apply ~ctx ~expr: (expr ~ctx) m 
+    )
 
-    and list ~ctx n = match Li.(n.items) with
+    and list ~ctx n = 
+        match Li.(n.items) with
         | [] -> (Base_types.list (ctx.tempvar()))
         | single :: [] ->
             Base_types.list (expr ~ctx single)
@@ -256,7 +369,7 @@ module Infer = struct
                 let errors = unify_ctx ~ctx first_t t in
                 (if List.length errors > 0 then (
                     ctx_add_errors ~ctx [
-                        BranchTypeMismatch {
+                        Errors.BranchTypeMismatch {
                             range = Expr.range e;
                             expected = first_t;
                             unexpected = t;
@@ -266,51 +379,69 @@ module Infer = struct
 
                 first_t
             ) in Base_types.list (first_t)
+
+    and foreign ~ctx _ = ctx.tempvar()
     and expr ~ctx = function
-        | Expr.Value m -> Value.(m.type_)
-        | Expr.Ident m -> ident_expr ~ctx m
+        | Expr.Value m -> m.typ
+        | Expr.Ident m -> Ident.(m.typ)
         | Expr.Lambda lam -> lambda ~ctx lam
         | Expr.Tuple t -> tuple_expr ~ctx t
         | Expr.Apply m -> apply_expr ~ctx m
         | Expr.Cond c -> cond ~ctx c
-        | Expr.Foreign _ -> (ctx.tempvar ())
+        | Expr.Foreign f -> foreign ~ctx f
         | Expr.Match m -> matc ~ctx m
         | Expr.Li l -> list ~ctx l
     and matc ~ctx m = Infer_match.matc ~ctx ~expr ~block_stmts m
-
 end
 
 (* TODO: better name *)
 module Global = struct 
+    let make_scheme typ =
+        let _, mapping = List.fold_map (Type.free_vars typ |> Set.to_list) 
+            ~init: ('a', 0)
+            ~f: (fun (ch, n) var ->
+                let v = (Char.to_string ch) ^ (if n = 0 then "" else Int.to_string n) in
+                let next_ch = (Caml.Char.code ch) + 1 in
+                let next = if next_ch > (Caml.Char.code 'z') then ('a', n + 1) else (Caml.Char.chr next_ch, n) in
+                next, (var, v)
+            )
+        in 
+        let subst = List.fold mapping ~init: (Subst.empty) ~f: (fun subst (replace, v) -> Subst.add subst replace (Type.Var v)) in
+        Type.make_scheme (List.map mapping ~f: (fun (_, v) -> v)) (Subst.apply subst typ)
+
     let binding ~source resolver node = 
-        let ctx = Resolve.make_context ~source resolver in
+        let ctx = Resolve.Ctx.make ~source resolver in
         let resolved = Resolve.toplevel_binding ctx node in
+        let scheme = (Option.value_exn resolved.scheme) in
         let env = match Let.(resolved.is_rec) with
         | true -> 
             Map.add_exn (Map.empty(module String)) 
                 ~key: Let.(resolved.scope_name) 
-                ~data: (Option.value_exn resolved.scheme)
+                ~data: scheme
         | false -> Map.empty(module String)
         in
         let infer_ctx = Inferno.make_ctx ~env in
+        (* TODO: return () *)
+        ignore @@ Infer.infer_default_params ~ctx:infer_ctx resolved.params;
         let result_type = Infer.block ~ctx: infer_ctx Let.(resolved.block) in
-        let result_type = Inferno.apply_substs ~ctx: infer_ctx result_type in
+        let result_type = Inferno.apply~ctx: infer_ctx result_type in
         let result_errors = Inferno.unify_ctx ~ctx: infer_ctx (resolved.result) result_type in 
-        let block = Subst.apply_substs_to_block infer_ctx.substs resolved.block in
-
-        let result_lambda = (Let.(resolved.params) 
-            |> List.map ~f:(fun p -> Param.(p.type'))) 
-                @ [resolved.result]
-            |> Type.Lambda.make
-            |> Subst.apply_substs infer_ctx.substs
+        let result_params = Subst.apply_substs_to_params infer_ctx.substs resolved.params in
+        let block = Subst.apply_to_block infer_ctx.substs resolved.block in
+        let lambda_params = Resolve.Params.to_type result_params in
+        let result = result_type in
+        let lambda_typ = match lambda_params with
+        | [] -> result
+        | multiple -> Type.Lambda.make multiple result 
         in
-        let scheme = Type.make_scheme (Inferno.free_vars ~ctx: infer_ctx result_lambda) result_lambda in
-        (* *)
+        let scheme = make_scheme lambda_typ in
         Resolver.Scope.set_binding_scheme resolver Let.(resolved.given_name) scheme;
             (* TODO: proper names *)
-        let typed_node = Let.{ resolved with
-            scheme = Some scheme;
-            block;
+        let typed_node = Let.{ resolved with 
+            scheme = Some scheme; 
+            params = result_params;
+            result = Subst.apply infer_ctx.substs resolved.result;
+            block 
         } in
         let resolve_errors = ctx.errors in
         let infer_errors = infer_ctx.errors in
@@ -393,8 +524,8 @@ let root ~source ~resolve_source m =
         "==", cmp_op;
         "!=", cmp_op;
         "%", int_op;
-        "$", Type.lambda ~constr: ["t"; "u"] [Type.Lambda (Type.Var "t", Type.Var "u"); Type.Var "t"; Type.Var "u"];
-        "|>", Type.lambda ~constr: ["t"; "u"] [Type.Var "t"; Type.Lambda (Type.Var "t", Type.Var "u"); Type.Var "u"];
+        "$", Type.lambda ~constr: ["t"; "u"] [Type.Lambda.make_positional [Type.Var "t"; Type.Var "u"]; Type.Var "t"; Type.Var "u"];
+        "|>", Type.lambda ~constr: ["t"; "u"] [Type.Var "t"; Type.Lambda.make_positional [Type.Var "t"; Type.Var "u"]; Type.Var "u"];
     ] in
     let resolver = Resolver.Scope.root source in
     List.iter predefined ~f:(fun (name, scheme) -> 
@@ -403,6 +534,6 @@ let root ~source ~resolve_source m =
     let tf = Transform.root m in 
     let m = Global.modu ~resolve_source resolver (Symbol.Id.make source [] "") Node.Module.{scope_name = ""; given_name = ""; exposed = Map.empty(module String); entries = tf.entries} in
     (match m with
-    | Ok m -> Common.log["~~~"; Pp.to_string [m |> Node.Module.pretty_print]];
+    | Ok m -> Common.log["~~~"; Pp.to_string [m |> Node.Print_node.modu]];
     | Error _ -> ());
     m

@@ -1,6 +1,5 @@
 open Common
 open Base
-open Erro
 open Inferno
 
 module Coverage = struct 
@@ -147,7 +146,7 @@ let check_is_exhaustive matc =
         | Some result -> 
             ( match Coverage.merge result [coverage] with
             | [] -> 
-                errors := !errors @ [UnusedMatchCase {range = Span.empty_range}];
+                errors := !errors @ [Errors.UnusedMatchCase {range = Span.empty_range}];
                 Some result
             | _ -> (
                 let result' = Coverage.merge result uncovered in
@@ -158,7 +157,7 @@ let check_is_exhaustive matc =
     | [] -> ()
     | _ -> 
         (* TODO: calculate missing cases *)
-        errors := !errors @ [NonExhaustivePatternMatching {range = Span.empty_range; missing_cases=[]}]
+        errors := !errors @ [Errors.NonExhaustivePatternMatching {range = Span.empty_range; missing_cases=[]}]
     );
     !errors
 
@@ -167,7 +166,7 @@ let matc ~ctx ~expr ~block_stmts m =
     let must_unify expect_typ pattern = 
         let pattern_typ = Match.pattern_to_type pattern in
         do_unify ~ctx expect_typ pattern_typ ~error: (
-            PatternMismatch {expected = expect_typ; unexpected = pattern_typ; range = Span.empty_range}
+            Errors.PatternMismatch {expected = expect_typ; unexpected = pattern_typ; range = Span.empty_range}
         )
     in
     let rec unify_structs = function
@@ -197,13 +196,14 @@ let matc ~ctx ~expr ~block_stmts m =
         let patterns_are_ok' = (unify_structs case.pattern) && patterns_are_ok in
         (match (case.pattern, typ) with
         | Match.Any, _ -> ()
-        | p, t -> ignore @@ must_unify t p);
+        | p, t -> 
+            ignore @@ must_unify t p);
 
         (* TODO:  *)
         let case_result = block_stmts ~ctx case.stmts in
         let result' = match result with
         | Type.Unknown -> case_result
-        | t -> ignore @@ do_unify ~ctx result t ~error: (BranchTypeMismatch {
+        | t -> ignore @@ do_unify ~ctx result t ~error: (Errors.BranchTypeMismatch {
                 range = Stmt.range (List.last_exn case.stmts);
                 expected = result;
                 unexpected = t;

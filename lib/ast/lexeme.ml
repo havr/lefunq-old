@@ -12,6 +12,7 @@ type t = Int of string
     | OpenParen
     | CloseParen
     | LineBreak
+    | Colon
     | Coma
     | Lambda
     | Eof
@@ -27,6 +28,7 @@ type t = Int of string
     | Pipe
     | Spread
     | Match
+    | Ampersand
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -36,6 +38,7 @@ let to_string lexeme = match lexeme with
     | Let -> "let"
     | Str s -> "str:" ^ s
     | Eq -> "="
+    | Colon -> ":"
     | Semi -> ";"
     | OpenBlock -> "{"
     | CloseBlock -> "}"
@@ -59,6 +62,7 @@ let to_string lexeme = match lexeme with
     | Pipe -> "|"
     | Match -> "?"
     | Spread -> ".."
+    | Ampersand -> "&"
     | Error e -> "error: " ^ e
 
 let eof = Eof

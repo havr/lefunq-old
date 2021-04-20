@@ -1,0 +1,164 @@
+using "std/http" {Server}
+
+Server.serve &port:8080 \request {
+    using "std/html" {*}
+
+    let page &title &(name=?} = title ? {
+        | Some n -> "hello"
+        | None -> "world"
+    }
+
+    let response = H.{
+        html [ body [ b ["Hi!"] ] ]
+    }
+
+    Response.ok (render response)
+}
+
+// optional arguments
+// custom operators
+// types
+// x-mode
+// fixed using / expose
+
+let styles, table = {
+    let table <- styled "table" [
+        padding [`px 10]
+        border (`all (px 10))
+    ]
+    let tr <- styled "tr" &subOf: table []
+
+    return struct &table &td
+}
+
+let struct &{tr; td; table} = style.styles
+
+html [
+    use_css [table]
+    body [
+        styles.table [ style.styles.td []]
+    ]
+]
+
+let model = Model.define
+
+
+
+module Index = {
+    type Props = struct &{
+        logged_in:
+    }
+
+    let _logged_info info = div &class: classes.profileMain [
+       div [text <| info.userName]
+    ]
+
+    let render props = {
+        page [
+            _logged_in props.(Props).logged_in
+        ]
+    }
+}
+
+
+let fold_mapi &init fn list = {
+    let* loop' idx result acc = {
+        | [] -> (acc, result)
+        | [a; ..rest] ->
+            let (acc', a') = fn idx acc a
+            loop' (idx + 1) [a'; ..result] acc' rest
+    }
+
+    let (acc, result) = loop' 0 [] init list
+    acc, (List.rev result)
+}
+
+struct |> List.fold_mapi &init: 1 \idx n section {
+    let pos = if section.reset_lesson_pos then 1 else n
+    let lessons = session.lessons |> List.mapi \idx lesson { lesson with &position: (idx + pos) }
+    (pos + List.length lessons, section with &position: idx &lessons)
+}
+
+type f = {
+    a: t -> u
+}
+
+LE F/LF R/A ShA
+
+let tasks = [
+    yum &name: "httpd" &state: "latest" ()
+    template &src: "/srv/httpd.j2" &dest: "/etc/httpd.conf"
+]
+
+let group = makeGroup "webservers" &user: "root"
+
+- name: update web servers
+  hosts: webservers
+  remote_user: root
+
+  tasks:
+  - name: ensure apache is at the latest version
+    yum:
+      name: httpd
+      state: latest
+  - name: write the apache config file
+    template:
+      src: /srv/httpd.j2
+      dest: /etc/httpd.conf
+
+
+
+let baz = switch foo {
+   | Some({ bar: Some({ baz: baz })}) => baz
+   | None => None
+}
+
+let baz = foo ? {
+    | Some .&bar: (Some .&baz: baz) -> baz
+    | None -> None
+}
+
+
+# build frontend
+# build backend
+
+let frontend = task "frontend" {
+    Lefunq.build "./spa.lf" &to: "./spa.js"
+}
+
+task "backend" &depends: [frontend] {
+
+}
+
+module Json = {
+    type JEntry = {
+        | JInt Int
+        | JStr Str
+        | JArray [Entry]
+        | JObject [Str, Entry]
+        | JNull
+    }
+
+    Json.
+}
+
+let parseUserJson u = {
+    let d = Json.requireDict u
+    let getter k = Dict.getOr "" d
+    User &name: (getter "name") &email: (getter "email")
+}
+
+type MyError = string
+
+impl MyError: Error = {
+    let message (MyError msg) = msg
+}
+
+impl ErrEndOfFile: ErrCause = {
+    let message = "end of file"
+}
+
+x ? ErrCause {
+  | ErrEof _ -> 0
+  | t -> 1
+}

@@ -48,30 +48,15 @@ type t =
     range: Span.range;
     (* use a data structure *)
     missing_cases: string list;
+} | CannotApplyWithLabel of {
+    range: Span.range;
+    label: string;
+    lambda: Type.t;
+} | CannotApplyWithoutLabel of {
+    range: Span.range;
+    lambda: Type.t;
 }
  
-
-(* let equals a b = phys_equal a b (*match (a, b) with *)
-| UndeclaredIdentifier a, UndeclaredIdentifier b ->
-    (phys_equal a.given_name b.given_name) && (Common.Span.equals a.range b.range)
-| TypeMismatch {type_expected = te; type_provided = tp; _},
-    TypeMismatch {type_expected = te'; type_provided = tp'; _} ->
-    (Type.equals te te' && Type.equals tp tp')
-| IgnoredResult {unexpected=u; _}, IgnoredResult {unexpected=u'; _} -> 
-    Type.equals u u'
-| NotFunction {type_provided=tp; _}, NotFunction {type_provided=tp'; _} -> 
-    Type.equals tp tp'
-| IfTypeMismatch {unexpected=u; _}, IfTypeMismatch {unexpected=u'; _} -> 
-    Type.equals u u'
-| BranchTypeMismatch {unexpected=u; expected=e; _}, 
-  BranchTypeMismatch {unexpected=u'; expected=e'; _} -> 
-    (Type.equals u u' && Type.equals e e')
-| SourceNotFound {source=s}, SourceNotFound{source = s2} -> phys_equal s s2
-| SourceSymbolNotFound {symbol = s1}, SourceSymbolNotFound {symbol = s2} -> phys_equal s s2
-*)
-
-(*| _ -> false*)
-
 let clear_range = function 
 | UndeclaredIdentifier {given_name; _} -> UndeclaredIdentifier {range = Span.empty_range; given_name}
 | TypeMismatch {type_expected = te; type_provided = tp; _} ->
@@ -100,7 +85,9 @@ let clear_range = function
     SourceSystemError {source = {source with range = Span.empty_range}}
 | NonExhaustivePatternMatching {missing_cases; _} -> 
     NonExhaustivePatternMatching {range = Span.empty_range; missing_cases}
-| UnusedMatchCase {range} -> UnusedMatchCase {range}
+| UnusedMatchCase _ -> UnusedMatchCase {range = Span.empty_range}
+| CannotApplyWithLabel r -> CannotApplyWithLabel {r with range = Span.empty_range}
+| CannotApplyWithoutLabel r -> CannotApplyWithoutLabel {r with range = Span.empty_range}
 
 let concat = String.concat ~sep: " "
 let to_string = function
@@ -139,5 +126,9 @@ let to_string = function
     concat ["Match cases is unused"; Span.range_str range]
 | NonExhaustivePatternMatching{range; missing_cases} -> 
     concat ["Non exhaustive pattern matching"; Span.range_str range; String.concat missing_cases ~sep: ", "]
+| CannotApplyWithLabel{range; label; lambda} -> 
+    concat ["Lambda contains only positional arguments. Cannot apply with label"; Span.range_str range; "Label:"; label; Type.to_string lambda]
+| CannotApplyWithoutLabel{range; lambda} -> 
+    concat ["Lambda contains only positional arguments. Cannot apply without a label:"; Span.range_str range; Type.to_string lambda]
 
 let equals a b = String.equal (to_string a) (to_string b)

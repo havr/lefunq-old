@@ -31,24 +31,27 @@ let let_stmt ?scope_name given_name stmts = Stmt.Let (
 )
 
 let value_stmt value typ = Stmt.Expr (
-    Expr.Value (Value.{value; type_=typ; range = Common.Span.empty_range})
+    Expr.Value (Value.{value; typ; range = Common.Span.empty_range})
 )
 
-let local_ident_stmt ?scope_name ?scheme name = 
+let local_ident_stmt ?scope_name ?typ name = 
     let ident = Ident.{
+        typ = Option.value ~default: Type.Unknown typ;
         range = Common.Span.empty_range;
         resolved = Symbol.Resolved.make name @@ Some (Typed.Symbol.Id.make "" [] @@ Option.value ~default:name scope_name);
         resolution = [];
-        scheme = scheme
     } in Stmt.Expr (Expr.Ident ident)
 
 let lambda_stmt params stmts = 
     let lambda = Typed.Lambda.{
         range = Common.Span.empty_range;
-        params = List.map params ~f:(fun (name, typ) -> 
+        typ = Type.Unknown;
+        params = List.map params ~f:(fun (n, typ) ->
             Typed.Param.{
-              shape = Typed.Param.Name name;
-              type' = typ
+              value = Typed.Param.(
+                Positional {pattern = Name {given = n; scope = n}}
+              );
+              typ
             }
         );
         block = Typed.Block.{stmts; range = Common.Span.empty_range}

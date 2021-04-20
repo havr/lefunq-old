@@ -2,82 +2,125 @@ open Base
 open Type_util
 open Common
 open Node
-(* open Error *)
 
-let rec type_param tempvar typ shape = 
-    (* s/valid_tuple_type/something better*)
-    let match_tuple valid_tuple_type tuple_shape = 
-        List.zip_exn valid_tuple_type tuple_shape
-        |> List.map ~f: (fun (typ, param) -> 
-            match Param.(param.type') with
-            | Type.Unknown -> type_param tempvar typ param.shape
-            | t -> begin 
-                if Type.equals t param.type' then
-                    type_param tempvar typ param.shape
-                else
-                    type_param tempvar t param.shape
-                    (* todo: error about mismatch *)
-            end
-        ) 
-    in
+module Params = struct 
+    open Node.Param
+    
+    let rec match_pattern ~scope ~tempvar typ pat = 
+        let add_name typ name' =  
+            let id = Resolver.Scope.add_binding scope name'.given (Type.make_scheme [] typ) in
+            Param.{name' with scope = id.name}
+        in
+        let match_tuple typs pats = 
+            Util.Lists.map2 typs pats ~f:(fun (typ, pat) -> match_pattern ~scope ~tempvar typ pat)
+        in
 
-    (* let arg_shape = Param.(arg.shape) in
-    let arg_typ = Param.(arg.typ) in *)
-    match (shape, typ) with
-    | Param.Unit, Type.Unknown ->
-        Param.{shape = Param.Unit; type' = Base_types.unit }
-    | Param.Unit, t ->
-        (* TODO: throw an error, this is quite unusual *)
-        Param.{shape = Param.Unit; type' = t}
-    | Param.Name n, Type.Unknown -> 
-        Param.{shape = Param.Name n; type' = tempvar() }
-    | Param.Tuple n, Type.Unknown -> begin
-        let typed = List.map n ~f:(fun (Param.{type'; shape}) -> type_param tempvar type' shape) in
-        let type' = Type.Tuple (List.map typed ~f:(fun entry -> entry.type')) in
-        Param.{shape = Param.Tuple typed; type' = type'}
-    end
-    | Param.Name _, _ -> Param.{shape = shape; type' = typ} (* TODO: check param name *)
-    | Param.Tuple tuple_shape, Type.Tuple tuple_type ->
-        if List.length tuple_shape < List.length tuple_type then begin
-            (* type error: (a, b) != (Int, Int, Int) *)
-            let valid_tuple_type = List.take tuple_type (List.length tuple_shape) in
-            (* TODO: s/tuple_shape/tuple_params *)
-            let typed = match_tuple valid_tuple_type tuple_shape in
+        match (typ, pat) with
+        | Type.Unknown, Param.Unit ->
+            (Base_types.unit, Param.Unit)
+        | t, Param.Unit ->
+            (* TODO: assert if t is Unit *)
+            (t, Param.Unit)
+
+        | Type.Unknown, Param.Name n -> 
+            let typ = tempvar() in
+            (typ, Param.Name (add_name typ n))
+
+        | t, Param.Name n -> 
+            (t, Param.Name (add_name t n))
+
+        | Type.Unknown, Param.Tuple tup -> 
+            let (typs, pats) = 
+                List.map tup ~f:(match_pattern ~scope ~tempvar Type.Unknown) |> List.unzip in
+            (Type.Tuple typs, Param.Tuple pats)
+
+        | Type.Tuple typs, Param.Tuple pats ->
+            let pat_len = List.length pats in
+            let typ_len = List.length typs in
+            if pat_len = typ_len then 
+                let (typ, pats) = match_tuple typs pats in
+                (Type.Tuple typ, Param.Tuple pats)
+            else if (pat_len < typ_len) then
+                (* TODO: s/typle_pat/typle_params *)
+                (* TODO: throw an error error *)
+                let (_, pats') = match_tuple (List.take typs pat_len) pats in
+                (Type.Tuple typs, Param.Tuple pats')
+            else (
+                (* TODO: throw an error error *)
+                let (_, matched) = match_tuple typs (List.take pats typ_len) in
+                let unmatched = List.drop pats typ_len in
+                (Type.Tuple typs, Param.Tuple (matched @ unmatched))
+            )
+        | _, Param.Tuple _ -> 
+            raise Common.TODO
+
+    let resolve ~scope ~tempvar ~expr param = 
+        let add_name typ n =  
+            let typ' = match typ with
+                | Type.Unknown -> tempvar()
+                | t -> t
+            in
+            let id = Resolver.Scope.add_binding scope n.given (Type.make_scheme [] typ') in
+            typ', Param.{n with scope = id.name}
+        in
+        match param.value with
+        | Param.Positional p -> 
+            let typ, pattern = match_pattern ~scope ~tempvar param.typ p.pattern in
             Param.{
-                shape = Param.Tuple typed;
-                type' = Type.Tuple tuple_type
+                typ;
+                value = Param.Positional {pattern}
             }
-        end else if List.length tuple_shape > List.length tuple_type then begin
-            (* TODO: dont' pass namer as a dep, make sub func *)
-            (* TODO: order of params everywhere *)
-            (* type error: (a, b, c) != (Int, Int) *)
-            let valid = match_tuple tuple_type (List.take tuple_shape (List.length tuple_type)) in
-            let invalid = List.drop tuple_shape (List.length tuple_type) 
-                |> List.map ~f: (fun param -> type_param tempvar Param.(param.type') param.shape) in
+        | Param.Optional p -> 
+            let typ, name' = add_name param.typ p.name in
             Param.{
-                shape = Param.Tuple (valid @ invalid);
-                type' = Type.Tuple tuple_type
+                typ;
+                value = Param.Optional {
+                    name = name';
+                    default = Option.map p.default ~f: (fun e -> expr e)
+                }
             }
-        end else begin 
-            let params = match_tuple tuple_type tuple_shape in
+        | Param.Named p -> 
+            let typ, name' = add_name param.typ p.name in
             Param.{
-                shape = Param.Tuple params;
-                type' = Type.Tuple tuple_type
+                typ;
+                value = Param.Named {name = name'}
             }
-        end
-    | Param.Tuple _, _ -> 
-        raise Common.TODO
-        (* maybe other_type is actually a tuple *)
-        (* but now just throw an error *)
+        | Param.Extension p -> 
+            let typ, name' = add_name param.typ p.name in
+            Param.{
+                typ;
+                value = Param.Extension {name = name'}
+            }
+
+
+    let to_type params = 
+        List.map params ~f: Param.(fun {typ; value} ->
+            match value with
+                | Positional _ -> Type.PosParam typ
+                | Named {name} -> Type.NamedParam {named_typ = typ; is_optional = false; name = name.given}
+                | Optional {name; _} -> Type.NamedParam {named_typ = typ; is_optional = true; name = name.given}
+                | Extension _ -> (raise Common.TODO) (* flatmap struct here *)
+    )
+
+    let to_lambda params result = 
+        Type.Lambda.make (to_type params) result
+end
 
 let resolve_typ typ = 
     let rec resolve = function
     (* TODO: Pay attention to vars up scope *)
+    | Type.Invalid -> Type.Invalid
     | Type.Unit -> Type.Unit
     | Type.Var name -> Type.Var name
     | Type.Simple name -> Type.Simple name (* TODO: proper name resolution *)
     | Type.Lambda (h, t) ->
-        Type.Lambda (resolve h, resolve t)
+        let h' = (match h with
+            | Type.PosParam p -> Type.PosParam (resolve p)
+            | Type.NamedParam p -> Type.NamedParam {p with named_typ = resolve p.named_typ}
+            | Type.NamedBlock b -> Type.NamedBlock (List.map b
+                ~f:(fun np -> 
+                    {np with named_typ = resolve np.named_typ}))) in
+        Type.Lambda (h', resolve t)
     | Type.Tuple elems ->
         Type.Tuple (List.map elems ~f: resolve)
     | Type.Unknown -> Type.Unknown
@@ -86,134 +129,86 @@ let resolve_typ typ =
     (* TODO: add errors *)
     result
 
-let init_last list = 
-    let rec loop result = function
-        | [] -> raise (Invalid_argument "list is empty")
-        | last :: [] -> (result, last)
-        | n :: m -> loop (result @ [n]) m 
-    in loop [] list
-
-let apply_sig sigt params =
-    let unrolled = match sigt with 
-        | Type.Lambda lam -> Type.Lambda.unroll lam 
-        | t -> [t]
-    in
-    let param_types = List.map params ~f: (fun p -> Param.(p.type')) in
-    let rec apply_sig_type = function
-    | (s :: srest, p :: prest) -> 
-        Common.log ["*"; Type.to_string s; Type.to_string p];
-        (match p with
-            | Type.Unknown -> 
-                s (* TODO: what about resolution? resolve sig first? *)
-            | _ ->
-                (*  TODO: match two types and resolve type vars here *)
-                raise Common.TODO
-        ) :: (apply_sig_type (srest, prest))
-    | ([], []) -> []
-    | ([], _) ->
-        raise Common.TODO (* signature doesn't fit the given number of parameters *)
-    | (srest, []) ->
-        srest
-    in
-    let sigt_params, result = init_last @@ apply_sig_type (unrolled, param_types @ [Type.Unknown]) in
-    (List.zip_exn sigt_params params 
-        |> List.map ~f:(fun (typ, param) -> Param.{param with type' = typ})), result
-
-
-let type_params tempvar params = 
-    (* let resolved_params = List.map resolve_typ ~f: params in
-    let resolved_sigt = sigt 
-        |> Option.map ~f: (fun sigt -> 
-            resolve_typ (sigt @@ [tempvar()])
-        )
-        
-    in *)
-
-
-    List.map params ~f:(fun param -> 
-        type_param tempvar Param.(param.type') Param.(param.shape)
-    )
 
 open Resolver
 
-type context = {
-    source: string;
-    scope: Scope.t;
-    mutable errors: Erro.t list;
-    tempvar: tempvar_gen;
-}
+module Ctx = struct 
+    type context = {
+        source: string;
+        scope: Scope.t;
+        mutable errors: Errors.t list;
+        tempvar: tempvar_gen;
+    }
 
-let make_context ?(source="") scope = {
-    source;
-    scope;
-    tempvar = make_tempvar_gen "p";
-    errors = [];
-}
+    let make ?(source="") scope = {
+        source;
+        scope;
+        tempvar = make_tempvar_gen "_p";
+        errors = [];
+    }
 
-let add_errors ~ctx errors = List.iter errors ~f: (fun error -> ctx.errors <- ctx.errors @ [error])
+    let add_errors ~ctx errors = List.iter errors ~f: (fun error -> ctx.errors <- ctx.errors @ [error])
 
-let local_scope ctx = {
-    ctx with scope = Scope.sub_local ctx.scope
-}
+    let local_scope ctx = {
+        ctx with scope = Scope.sub_local ctx.scope
+    }
 
-let ident ctx ident = 
-    let resolution = Node.Ident.(ident.resolution) @ [ident.resolved] in
-    match Scope.lookup ctx.scope resolution with
+    let sub_ctx ctx scope = {ctx with scope = scope ctx.scope}
+end
+
+let instantiate_scheme ~ctx scheme =
+    let new_substs = List.fold 
+        Type.(scheme.constr) 
+        ~init: Subst.empty
+        ~f: (fun substs var_name ->
+            Subst.add substs var_name Ctx.(ctx.tempvar())
+    ) in 
+    Subst.apply new_substs scheme.typ 
+
+let ident ctx id = 
+    let resolution = Node.Ident.(id.resolution) @ [id.resolved] in
+    match Scope.lookup Ctx.(ctx.scope) resolution with
     | Some ({binding = Some binding; _}, resolved) -> 
         (* TODO: continue here: local bindings use their resolved, not exposed values *)
-        let resolved, resolution = resolved @ [Symbol.Resolved.make ident.resolved.given (Some binding.id)]
+        let resolved, resolution = 
+            resolved @ [Symbol.Resolved.make id.resolved.given (Some binding.id)]
             |> Util.Lists.last_rest in
-        { ident with
-            scheme = Some binding.scheme;
-            (* TODO: remove the if *)
-            resolved; resolution;
+        Node.Ident.{ 
+            id with
+            typ = instantiate_scheme ~ctx binding.scheme; (* TODO: should I instantiate scheme here*)
+            resolved; 
+            resolution;
         }
+        
     | Some ({binding = None; _}, _) -> 
     (* TODO: rly *)
-        add_errors ~ctx [Erro.UndeclaredIdentifier {given_name = ident.resolved.given; range = ident.range}];
-        ident
+        Ctx.add_errors ~ctx [Errors.UndeclaredIdentifier {given_name = id.resolved.given; range = id.range}];
+        id
     | None -> 
-        add_errors ~ctx [Erro.UndeclaredIdentifier {given_name = ident.resolved.given; range = ident.range}];
-        ident
+        Ctx.add_errors ~ctx [Errors.UndeclaredIdentifier {given_name = id.resolved.given; range = id.range}];
+        id
 
-let flatten list = 
-    let rec flatten' result = function
-        | [] -> result
-        | a :: rest -> flatten' (result @ a) rest
-    in flatten' [] list
 
-let sub_ctx ctx scope = {ctx with scope = scope ctx.scope}
 
 let rec local_binding ctx node = 
     binding ~sub_scope: (Resolver.Scope.sub_local) ctx node
 
-and binding ~sub_scope ctx node = 
-    let params, result = match Let.(node.sigt) with 
-        | None -> 
-            let map_param param = match Param.(param.type') with
-            | Type.Unknown -> {param with type' = ctx.tempvar()}
-            | _ -> param
-            in (node.params |> List.map ~f:map_param), (ctx.tempvar())
-        | Some sigt -> apply_sig sigt node.params
+and binding ~sub_scope root_ctx node = 
+    (* let params, result = Let.(node.params |> List.map ~f:(Params.resolve ~tempvar: Ctx.(ctx.tempvar) ~scope: Ctx.(ctx.scope))), (ctx.tempvar()) in *)
+    let ctx' = Ctx.sub_ctx root_ctx sub_scope in
+    (* let default_ctx = Ctx.sub_ctx root_ctx (Resolver.Scope.sub_local) in *)
+    let params = List.map ~f:(Params.resolve ~expr: (expr ctx') ~tempvar:ctx'.tempvar ~scope: ctx'.scope) Let.(node.params) in
+    let lambda_params = Params.to_type params in
+    let result = (root_ctx.tempvar()) in
+    let lambda_typ = match lambda_params with
+    | [] -> result
+    | multiple -> Type.Lambda.make multiple result 
     in
-    let ctx' = sub_ctx ctx sub_scope in
-    let params = resolve_params ctx' params in
-    let param_types = List.map params 
-        ~f:(fun param -> Param.(param.type')) @ [result]
-    in
-    let free_vars = List.map param_types ~f:Type.free_vars 
-        |> Set.union_list(module String) 
-        |> Set.to_list in
-    let typ = match param_types with
-    | only :: [] -> only
-    | multiple -> Type.Lambda.make multiple
-    in
-    let scheme = Type.make_scheme free_vars typ in
-    Option.iter node.sigt ~f: (fun opt -> Common.log ["sigt"; Type.to_string opt]);
-    Common.log [node.given_name; Type.scheme_to_string scheme];
+    let free_vars = Type.free_vars (lambda_typ) in
+    let scheme = Type.make_scheme (Set.to_list free_vars) lambda_typ in
     let result = match Let.(node.is_rec) with
     | true ->
-        let id = Scope.add_binding ctx.scope Let.(node.given_name) scheme in
+        let id = Scope.add_binding root_ctx.scope Let.(node.given_name) scheme in
         { node with 
             params = params;
             scheme = Some scheme;
@@ -223,8 +218,8 @@ and binding ~sub_scope ctx node =
         }
     | false ->
         let b = block ctx' Let.(node.block) in
-        ctx.errors <- ctx.errors @ ctx'.errors;
-        let id = Scope.add_binding ctx.scope Let.(node.given_name) scheme in
+        root_ctx.errors <- root_ctx.errors @ ctx'.errors;
+        let id = Scope.add_binding root_ctx.scope Let.(node.given_name) scheme in
         { node with 
             scheme = Some scheme;
             block = b;
@@ -233,7 +228,7 @@ and binding ~sub_scope ctx node =
             result = result
         }
     in 
-        ctx.errors <- ctx.errors @ ctx'.errors;
+        root_ctx.errors <- root_ctx.errors @ ctx'.errors;
         result
 
 and matc ~ctx n =
@@ -244,7 +239,7 @@ and matc ~ctx n =
         | Match.List li -> Match.List { 
             items = List.map li.items ~f:(resolve_pattern ~ctx);
             rest = Option.map li.rest ~f:(resolve_pattern ~ctx);
-            item_typ = ctx.tempvar()
+            item_typ = Ctx.(ctx.tempvar)()
         }
         | Match.Str s -> Match.Str s
         | Match.Int i -> Match.Int i
@@ -256,81 +251,61 @@ and matc ~ctx n =
     in
     let e = expr ctx Match.(n.expr) in
     let cases = List.map n.cases ~f: (fun case ->
-        let ctx = sub_ctx ctx Resolver.Scope.sub_local in
+        let ctx = Ctx.sub_ctx ctx Resolver.Scope.sub_local in
         let pattern = resolve_pattern ~ctx case.pattern in
         let stmts = block_stmts ~ctx case.stmts in
         Match.{stmts; pattern}
-    ) in {n with cases; expr = e}
-    and block_stmts ~ctx stmts = List.map stmts ~f:(function 
-        | Stmt.Expr n -> 
-            Stmt.Expr (expr ctx n)
-        | Stmt.Let n -> 
-            let result = (local_binding ctx n) in
-            Stmt.Let result
-        | Stmt.Block 
-            _ -> raise Common.TODO (* Disallow block inside blocks *)
-    ) 
-and block ctx n =
-    {n with stmts = block_stmts ~ctx Block.(n.stmts)}
+    ) in Match.{n with cases; expr = e}
+
+and block_stmts ~ctx stmts = List.map stmts ~f:(function 
+    | Stmt.Expr n -> 
+        Stmt.Expr (expr ctx n)
+    | Stmt.Let n -> 
+        Stmt.Let (local_binding ctx n)
+    | Stmt.Block 
+        _ -> raise Common.TODO (* Disallow block inside blocks *)
+)
+
+and block ctx n = Block.{n with stmts = block_stmts ~ctx n.stmts}
+and li ~ctx n = Li.{n with items = List.map ~f: (expr ctx) n.items}
+and tuple ~ctx n = Tuple.{n with exprs = List.map ~f: (expr ctx) n.exprs}
 and expr ctx = function
 | Expr.Value v -> Expr.Value v
 | Expr.Ident n -> Expr.Ident (ident ctx n)
 | Expr.Apply n -> Expr.Apply (apply ctx n)
 | Expr.Lambda n -> Expr.Lambda (lambda ctx n)
-| Expr.Li li -> Expr.Li {li with items = List.map ~f: (expr ctx) li.items}
+| Expr.Li n -> Expr.Li (li ~ctx n)
 | Expr.Foreign f -> Expr.Foreign f
 | Expr.Cond n -> Expr.Cond (cond ctx n )
-| Expr.Tuple t -> Expr.Tuple {t with exprs = List.map ~f:(expr ctx) t.exprs}
+| Expr.Tuple t -> Expr.Tuple (tuple ~ctx t)
 | Expr.Match m -> Expr.Match (matc ~ctx m)
-and apply ctx n = 
-    let fn_result = expr ctx Apply.(n.fn) in
-    let arg_results = List.map ~f: (expr ctx) n.args in
-    { n with fn = fn_result; args = arg_results }
-and cond ctx n = 
-    let cases = List.map n.cases ~f:(fun {if_; then_} ->
-        Cond.{
-            if_ = block (local_scope ctx) if_;
-            then_ = block (local_scope ctx) then_;
-        }
-    ) in
-    let else_ = Cond.(n.else_) |> Option.map ~f: (block (local_scope ctx)) in
-    { n with cases = cases; else_ = else_ }
-and resolve_params ctx params = 
-    (* TODO: report unused idents *)
-    (* let rec extract_names param = match Param.(param.shape) with
-    | Param.Name n -> [n.given, Type.make_scheme [] param.type']
-    | Param.Tuple t -> List.map t ~f:extract_names |> List.concat
-    | Param.Unit -> []
-    in 
-    let report_duplicates param_names =
-        let as_map = List.fold param_names ~init: (Map.empty(module String)) ~f:(fun map (name, typ) ->
-            if Map.mem map name then (* throw an error *) map
-            else (Map.add_exn map ~key: name ~data: typ)) in
-        Map.to_alist as_map
-    in  *)
-    let typed_params = type_params ctx.tempvar params in
-    let rec resolve_param param = Param.{ param with shape = match (param.shape) with
-            | Name n -> Name {n with resolved = (Scope.add_binding ctx.scope n.given (Type.make_scheme [] param.type')).name}
-            | Tuple t -> Tuple (List.map t ~f: resolve_param)
-            | Unit -> Unit
-        }
-    in
-    let typed_params = List.map ~f:resolve_param typed_params in
-    (* let type_names = report_duplicates (List.map typed_params ~f:extract_names |> List.concat) in *)
-    typed_params
+and apply ctx n = Apply.{n with 
+        fn = expr ctx n.fn; 
+        args = List.map ~f: (arg ctx) n.args; typ = ctx.tempvar() 
+    }
+and arg ctx = function
+    | Apply.PosArg {expr = e} -> Apply.PosArg {expr = expr ctx e}
+    | Apply.NameArg {name; expr = e} -> Apply.NameArg {name; expr = expr ctx e}
 
+and cond ctx n = 
+    let cases = List.map Cond.(n.cases) ~f:(fun {if_; then_} ->
+        Cond.{ if_ = block (Ctx.local_scope ctx) if_; then_ = block (Ctx.local_scope ctx) then_ }
+    ) in
+    let else_ = Cond.(n.else_) |> Option.map ~f: (block (Ctx.local_scope ctx)) in
+    Cond.{ n with cases = cases; else_ = else_; typ = ctx.tempvar() }
 and lambda ctx n = 
-    (* TODO: resolve type names *)
-    let ctx' = sub_ctx ctx (Resolver.Scope.sub_local) in
-    let typed_params = resolve_params ctx' Lambda.(n.params) in
+    let ctx' = Ctx.sub_ctx ctx (Resolver.Scope.sub_local) in
+    (* TODO: refactor the way default expr is being passed *)
+    let default_ctx = Ctx.sub_ctx ctx (Resolver.Scope.sub_local) in
+    let typed_params = List.map ~f:(Params.resolve ~expr: (expr default_ctx) ~tempvar:Ctx.(ctx'.tempvar) ~scope:ctx'.scope) Lambda.(n.params) in
+    let params_type = Params.to_lambda typed_params (ctx.tempvar()) in
     let b = block ctx' n.block in
     ctx.errors <- ctx.errors @ ctx'.errors;
-    { n with params = typed_params; block = b}
+    Lambda.{ n with params = typed_params; block = b; typ = params_type}
 
 
 let toplevel_binding ctx n =
     binding ~sub_scope: (Resolver.Scope.toplevel) ctx n
-
 
 type resolve_source_error = 
     | CyclicDependency of string list
@@ -338,22 +313,21 @@ type resolve_source_error =
     | SystemError
     | SourceError
 
-
 let import resolve_source resolver node = 
     let errors = ref [] in
 
     let rec lookup_exposed names = function
     | [] -> raise (Invalid_argument "no path is provided")
     | namespan :: [] -> (match Map.find names Common.Span.(namespan.value) with 
-      | None -> Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = namespan})
+      | None -> Error (Errors.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = namespan})
       | Some m -> Ok m
     )
     | moduspan :: rest -> (
         match Map.find names Common.Span.(moduspan.value) with
-        | None ->  Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = moduspan})
+        | None ->  Error (Errors.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = moduspan})
         | Some exposed -> (match Symbol.Module.(exposed.modu) with
         (* TODO: Is not a module error *)
-            | None -> Error (Erro.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = moduspan})
+            | None -> Error (Errors.SourceSymbolNotFound { source = Node.Import.(node.source); symbol = moduspan})
             | Some modu -> lookup_exposed Symbol.Module.(modu.exposed) rest
         )
     )
@@ -361,16 +335,16 @@ let import resolve_source resolver node =
     let node' = match resolve_source Node.Import.(node.source.value) with
     (* TODO: errors when shadowing imports *)
     | Error (CyclicDependency list) -> 
-        errors := (Erro.CyclicDependency {list; caused_by = node.source}) :: !errors;
+        errors := (Errors.CyclicDependency {list; caused_by = node.source}) :: !errors;
         node
     | Error (SourceNotFound) -> 
-        errors := (Erro.SourceNotFound {source = node.source}) :: !errors;
+        errors := (Errors.SourceNotFound {source = node.source}) :: !errors;
         node
     | Error (SourceError) ->
-        errors := (Erro.SourceCompileError {source = node.source}) :: !errors;
+        errors := (Errors.SourceCompileError {source = node.source}) :: !errors;
         node
     | Error (SystemError) ->
-        errors := (Erro.SourceSystemError {source = node.source}) :: !errors;
+        errors := (Errors.SourceSystemError {source = node.source}) :: !errors;
         node
     | Ok (resolved_source, source_scope) ->
         let names = List.map node.names ~f:(fun {name; path; _} -> 

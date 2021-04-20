@@ -40,7 +40,7 @@ let matc_tests = [
                 range = Span.empty_range;
                 fn = Expr.Value (Value.Ident (Span.empty "func"));
                 args = [
-                    Expr.Value (Value.Ident(Span.empty "hello"));
+                    Apply.PosArg{expr = Expr.Value (Value.Ident(Span.empty "hello"))};
                 ]
             });
             block = Match.{

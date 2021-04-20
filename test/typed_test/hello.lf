@@ -1,0 +1,31 @@
+
+
+type Response = {
+    Response &{
+        code: Int
+        headers: [Str, Str]
+        body: Writer
+    }
+}
+
+Ws.serve &port:8080 \conn {
+
+    Writer.put ws (Bytes.from_string "Hello")
+}
+
+
+let use &storage &settings next request = {
+    Storage.get storage settings.(Settings).key ? {
+        | Ok (Some session) -> next session request
+        | Ok (None) -> settings.notFound request
+        | Err e -> settings.error err
+    }
+}
+
+let storage = Session.Storage.Redis (redis_cli)
+
+let settings = Session.Settings &{
+    key: "default"
+    notFound: \() { Response.unauthorized "Unauthorized"}
+    error: \e { Response.internal_error e }
+}

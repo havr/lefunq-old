@@ -1,4 +1,4 @@
-open Typed_test__infer__helper
+(* open Typed_test__infer__helper
 open Helper
 
 let resolved name = Typed.Symbol.Resolved.make name @@ Some (Typed.Symbol.Id.make "" [] name)
@@ -150,6 +150,13 @@ module Infer = struct
     scheme = Some (Typed.Type.make_scheme [] typ);
   })
 
+  let typed_local_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
+    resolved = resolved name;
+    resolution = [];
+    range = Common.Span.empty_range;
+    scheme = Some (Typed.Type.make_scheme [] typ);
+  })
+
   let global_ident_expr name typ = Typed.Expr.Ident (Typed.Ident.{
     resolved = resolved name;
     resolution = [];
@@ -206,7 +213,7 @@ module Infer = struct
       })
       ~expect_type: (simple "Str")
       ~errors: [
-        Typed.Erro.TypeMismatch {
+        Typed.Errors.TypeMismatch {
           range = Common.Span.empty_range;
           type_provided = simple "Float";
           type_expected = Typed.Base_types.int;
@@ -225,7 +232,7 @@ module Infer = struct
       })
       ~expect_type: (simple "Str")
       ~errors: [
-        Typed.Erro.TypeMismatch {
+        Typed.Errors.TypeMismatch {
           range = Common.Span.empty_range;
           type_provided = Typed.Base_types.int;
           type_expected = simple "Float";
@@ -254,7 +261,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.Base_types.int)
       ~errors: [
-        Typed.Erro.TypeMismatch {
+        Typed.Errors.TypeMismatch {
           range = Common.Span.empty_range;
           type_provided = simple "Str";
           type_expected = simple "Float";
@@ -289,7 +296,7 @@ module Infer = struct
       })
       ~expect_type: (Typed.Base_types.int)
       ~errors: [
-        Typed.Erro.TypeMismatch {
+        Typed.Errors.TypeMismatch {
           range = Common.Span.empty_range;
           type_provided = simple "Str";
           type_expected = simple "Float";
@@ -312,7 +319,7 @@ module Infer = struct
       })
       ~expect_type: (simple "Str")
       ~errors: [
-        Typed.Erro.NotFunction {
+        Typed.Errors.NotFunction {
           range = Common.Span.empty_range;
           type_provided = simple "Str";
         }
@@ -371,7 +378,7 @@ module Infer = struct
       })
       ~expect_type: (simple "Str")
       ~errors: [
-        Typed.Erro.TypeMismatch {
+        Typed.Errors.TypeMismatch {
           range = Common.Span.empty_range;
           type_provided = Typed.Base_types.int;
           type_expected = simple "Str";
@@ -460,7 +467,7 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.TypeMismatch {
+        Typed.Errors.TypeMismatch {
           range = Common.Span.empty_range;
           type_provided = simple "Str";
           type_expected = Typed.Base_types.int;
@@ -524,7 +531,7 @@ module Infer = struct
         Typed.Base_types.unit;
       )
       ~errors: [
-        Typed.Erro.IfTypeMismatch {
+        Typed.Errors.IfTypeMismatch {
           range = Common.Span.empty_range;
           unexpected = Typed.Base_types.int
         }
@@ -547,7 +554,7 @@ module Infer = struct
         Typed.Base_types.unit;
       )
       ~errors: [
-        Typed.Erro.IfTypeMismatch {
+        Typed.Errors.IfTypeMismatch {
           range = Common.Span.empty_range;
           unexpected = Typed.Type.Tuple [Typed.Base_types.int; Typed.Base_types.int]
         }
@@ -569,7 +576,7 @@ module Infer = struct
         Typed.Base_types.unit;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {
+        Typed.Errors.BranchTypeMismatch {
           range = Common.Span.empty_range;
           unexpected = Typed.Base_types.int;
           expected = Typed.Base_types.unit
@@ -592,7 +599,7 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {
+        Typed.Errors.BranchTypeMismatch {
           range = Common.Span.empty_range;
           unexpected = Typed.Base_types.str;
           expected = Typed.Base_types.int
@@ -623,7 +630,7 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {
+        Typed.Errors.BranchTypeMismatch {
           range = Common.Span.empty_range;
           unexpected = Typed.Base_types.str;
           expected = Typed.Base_types.int
@@ -654,7 +661,7 @@ module Infer = struct
         Typed.Base_types.int;
       )
       ~errors: [
-        Typed.Erro.BranchTypeMismatch {
+        Typed.Errors.BranchTypeMismatch {
           range = Common.Span.empty_range;
           unexpected = Typed.Base_types.str;
           expected = Typed.Base_types.int
@@ -696,16 +703,17 @@ module Infer = struct
     - Lambda (makes correct schema)
     - Let
   *)
-end
+end *)
 
 let tests = [
   (* "Unify", Unify.tests; *)
-  "Typed:Let", Typed_test__let.tests;
-  "Block", Typed_test__infer__block.tests;
-  "typed:match", Typed_test__match.tests;
+  "Infer", Typed_infer_test.tests;
+  (* "Typed:Let", Typed_test__let.tests;
+  "Typed:match", Typed_test__match.tests; *)
+  (* "Block", Typed_test__infer__block.tests;
   "Cond", Infer.Cond.tests;
   "Infer", Infer.tests;
-  "Global", Global_infer_test.tests
+  "Global", Global_infer_test.tests *)
 ]
 
 (* let () = Infer.run_test () *)

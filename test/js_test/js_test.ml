@@ -58,7 +58,7 @@ module EndToEnd = struct
 end
 
 let sigs = EndToEnd.define "sigs" [
-    {
+    (* {
         name = "working";
         expect = "hello";
         main = "main.le";
@@ -71,14 +71,154 @@ let sigs = EndToEnd.define "sigs" [
                 }
             |}
         ]
-    }
+    } *)
 ]
+
+let lines = String.concat ~sep: "\n"
 
 (* let () = Alcotest.run "Parlex" [
   "Applicative", Applicative_test.tests;
   "Matchers", Matchers_test.tests;
 ] *)
 let lambdas = EndToEnd.define "lambdas" [
+    {
+        name = "destruct_tuple_params";
+        expect = "-2";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let fn (a, (b, c)) = a * (b - c)
+                let main = {
+                    println (fn (2, (2, 3)))
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_immediate_optional_scope";
+        expect = "8";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                let fn &{a=1} &{b=a+1} &{c=b+2} () = {
+                    a * b * c
+                }
+
+                let main = {
+                    println (fn ())
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_immediate_optional_2";
+        expect = lines ["10"; "100"; "30"];
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn &{a=10} = {
+                    println a
+                    \ &{b=20} {
+                        println b
+                        \ &{c=30} () {
+                            println c
+                        }
+                    }
+                }
+
+                let main = {
+                    fn &b: 100 ()
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_immediate_optional";
+        expect = "-10";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn &{x=10} a = x - a
+                let main = {
+                    println (fn 20)
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_immediate_rewrap";
+        expect = "11";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn &x a &y b = (x - a) + (y - b)
+                let fn' = fn 10 &x: 20
+                let main = {
+                    println (fn' 1 &y: 2)
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_rewrap_simple";
+        expect = "-10";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn &a b = a - b
+                let fn' = fn 20
+                let main = {
+                    println (fn' &a: 10)
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_immediate_named2";
+        expect = "10";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn &a b &c d = a + b + c + d
+                let main = {
+                    println (fn 1 &a:2 3 &c:4)
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply_immediate_named";
+        expect = "60";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn &a b = a + b
+                let main = {
+                    println (fn (fn 10 &a: 20) &a: 30)
+                }
+            |}
+        ]
+    };
+    {
+        name = "apply";
+        expect = "6";
+        main = "main.le";
+        files = [
+            "/main.le", {|
+                // comment
+                let fn a b = a + b
+                let main = {
+                    println (fn 3 (fn 1 2))
+                }
+            |}
+        ]
+    };
     {
         name = "multiple";
         expect = "a\nb\nc";
@@ -108,9 +248,9 @@ let lambdas = EndToEnd.define "lambdas" [
                 let (|>) x f = f x 
                 let ($) f x = f x
                 let add a b = a + b
-                let main = add 2 
-                    $ 40 
-                    |> println
+                let main = (add 2 40) |> println
+                    //(* $ 40  *)
+                    //|> println
             |}
         ]
     };

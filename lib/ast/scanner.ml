@@ -59,6 +59,8 @@ let defs = [
         char "=");
     ((fun _ -> Semi), 
         oneMore @@ char ";");
+    ((fun _ -> Colon), 
+        char ":");
     ((fun _ -> Pipe), 
         char "|");
     ((fun _ -> OpenBlock), 
@@ -79,6 +81,8 @@ let defs = [
         char ",");
     ((fun _ -> Spread), 
         str "..");
+    ((fun _ -> Ampersand), 
+        str "&");
     ((fun _ -> Match), 
         str "?");
     ((fun _ -> Lambda), 

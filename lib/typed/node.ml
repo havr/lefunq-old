@@ -1,172 +1,176 @@
 open Base
 open Common
 
+(* TODO (refactor): 
+    - move pp/stuff out
+    - add typed / spanned annotations everywhere
+*)
+
 module rec Cond: sig 
     type case = {
         if_: Block.t;
         then_: Block.t
     }
-    and t = {
+    type t = {
+        typ: Type.t;
         range: Span.range;
         cases: case list;
         else_: Block.t option;
     }
-
-    val pretty_print: t -> Pp.branch
 end = struct 
     type case = {
         if_: Block.t;
         then_: Block.t
     }
-    and t = {
+
+    type t = {
+        typ: Type.t;
         range: Span.range;
         cases: case list;
         else_: Block.t option;
     }
+end
+and Param: sig 
+    type name = {given: string; scope: string}
 
-    let pretty_print cond = 
-        let cases = List.map cond.cases ~f: (fun case ->
-            let if_branch = Pp.(branch [text "IF"] (List.map ~f: Stmt.pretty_print case.if_.stmts)) in 
-            let then_branch = Pp.(branch [text "THEN"] (List.map ~f: Stmt.pretty_print case.then_.stmts)) in 
-            Pp.(branch [text "CASE"] [if_branch; then_branch])
-        ) in 
-        let else_ = match cond.else_ with 
-        | None -> []
-        | Some else_ -> 
-            [Pp.(branch [text "ELSE"] (List.map ~f:Stmt.pretty_print else_.stmts))]
-        in
-        Pp.(branch [text "COND"] (cases @ else_))
+    type pattern = 
+    | Unit
+    | Tuple of pattern list 
+    | Name of name
+
+    type param =
+        | Positional of {pattern: pattern}
+        | Named of {name: name}
+        | Optional of {name: name; default: Expr.t option}
+        | Extension of {name: name}
+
+    type t = {
+        typ: Type.t;
+        value: param
+    }
+
+    val names: t -> name list
+    val equals: t -> t -> bool
+    val name: string -> string -> name
+end = struct 
+    type name = {given: string; scope: string}
+
+    let name given scope = {given; scope}
+
+    type pattern = 
+    | Unit
+    | Tuple of pattern list 
+    | Name of name
+
+    type param =
+        | Positional of {pattern: pattern}
+        | Named of {name: name}
+        | Optional of {name: name; default: Expr.t option}
+        | Extension of {name: name}
+
+    type t = {
+        typ: Type.t;
+        value: param
+    }
+
+    let names p = 
+        let rec pattern_names = function
+            | Tuple tu -> List.map tu ~f:pattern_names |> List.concat
+            | Name n -> [n]
+            | Unit -> []
+            in
+        match p.value with
+        | Positional {pattern} -> pattern_names pattern
+        | Named {name} -> [name]
+        | Optional {name; _} -> [name]
+        | Extension {name} -> [name]
+
+    let equals a b = phys_equal a b
 end
 and Apply: sig
+    type arg = 
+        | PosArg of {expr: Expr.t}
+        | NameArg of {name: string Span.t; expr: Expr.t}
+
     type t = {
+        typ: Type.t;
         range: Span.range;
         fn: Expr.t;
-        args: Expr.t list;
+        args: arg list;
     }
 
-    val pretty_print: t -> Pp.branch
+    val arg_range: arg -> Span.range
 end = struct 
+    type arg = 
+        | PosArg of {expr: Expr.t}
+        | NameArg of {name: string Span.t; expr: Expr.t}
+
     type t = {
+        typ: Type.t;
         range: Span.range;
         fn: Expr.t;
-        args: Expr.t list; 
+        args: arg list;
     }
 
-    let pretty_print n = 
-        let fn = [Expr.pretty_print n.fn] in
-        let args = List.map n.args ~f: Expr.pretty_print in
-        Pp.(branch [text "APPLY"]  (fn @ args))
+    let arg_range= function
+        | PosArg {expr} -> Expr.range expr
+        | NameArg {name; expr} -> Span.merge (name.range) (Expr.range expr)
+
 end
 and Value: sig
     type t = {
+        typ: Type.t;
+        range: Span.range;
         value: string;
-        type_: Type.t;
-        range: Span.range
     }
 
-    val to_string: t -> string
-    val equals: t -> t -> bool
-    val pretty_print: t -> Pp.branch
 end = struct 
     type t = {
+        typ: Type.t;
+        range: Span.range;
         value: string;
-        type_: Type.t;
-        range: Span.range
     }
-
-    let pretty_print n = Pp.(branch [text "VALUE"; n.type_ |> Type.to_string |> text; text n.value] [])
-
-    let to_string v = "value " ^ v.value ^ " :" ^ (Type.to_string v.type_)
-    let equals a b = 
-        let values_equal = phys_equal a.value b.value in
-        let types_equal = Type.equals a.type_ b.type_ in
-        values_equal && types_equal
-
 end
 and Foreign: sig 
     type t = {
+        typ: Type.t;
         range: Span.range;
         name: string;
         scheme: Type.scheme option;
     }
-
-    val pretty_print: t -> Pp.branch 
 end = struct 
     type t = {
+        typ: Type.t;
         range: Span.range;
         name: string;
         scheme: Type.scheme option;
     }
 
-    let pretty_print m = 
-        let scheme_str = match m.scheme with
-        | None -> "<no scheme>"
-        | Some m -> Type.scheme_to_string m
-        in
-        Pp.(branch [text "FOREIGN"; text m.name; text scheme_str] [])
 end
 and Ident: sig 
     type t = {
+        typ: Type.t;
         range: Span.range;
         resolved: Symbol.Resolved.t; 
         resolution: Symbol.Resolved.t list;
-        scheme: Type.scheme option;
+        (* scheme: Type.scheme option; *)
     }
 
-    val to_string: t -> string
-    val equals: t -> t -> bool
-    val pretty_print: t -> Pp.branch
+    (* val equals: t -> t -> bool *)
 end = struct 
     type t = {
+        typ: Type.t;
         range: Span.range;
         resolved: Symbol.Resolved.t; 
         resolution: Symbol.Resolved.t list;
-        scheme: Type.scheme option;
     }
-
-    let pretty_print n = 
-        let scheme = match n.scheme with
-        | None -> "<no scheme>"
-        | Some m -> Type.scheme_to_string m
-        in
-        let resolved r = 
-            let abs = match Symbol.Resolved.(r.absolute) with
-            | None -> "<unresolved>"
-            | Some m -> Symbol.Id.to_string m
-            in r.given ^ "(" ^ abs ^ ")"
-        in
-        let names = n.resolution 
-            |> List.map ~f:resolved 
-            |> String.concat ~sep: "."
-        in Pp.(branch [
-            text "IDENT"; 
-            text @@ "resolved:" ^ (resolved n.resolved);
-            text names;
-            text @@ "scheme:" ^ scheme
-        ] [])
-
     (* Use "equal" everywhere *)
-    let equals a b =
+    (* let equals a b =
         Symbol.Resolved.equal a.resolved b.resolved
         && (Symbol.Resolved.equal_path a.resolution b.resolution)
-        && (Caml.(=) a.scheme b.scheme)
-
-    let to_string id = 
-        let scheme = match id.scheme with
-        | None -> "unknown"
-        | Some s -> Type.scheme_to_string s
-        in
-
-        String.concat [
-            "IDENT";
-            (Symbol.Resolved.to_string id.resolved); 
-            "("; 
-            (id.resolution |> List.map ~f:Symbol.Resolved.to_string |> String.concat ~sep: "."); 
-            "): ";
-            scheme
-        ]
-
+        && (Caml.(=) a.scheme b.scheme) *)
 end
+
 and Let: sig 
     type t = {
         range: Span.range;
@@ -180,7 +184,6 @@ and Let: sig
         sigt: Type.t option;
     }
 
-    val pretty_print: t -> Pp.branch
 end = struct 
     type t = {
         range: Span.range;
@@ -191,131 +194,74 @@ end = struct
         block: Block.t;
         params: Param.t list;
         result: Type.t;
+        (* remove *)
         sigt: Type.t option;
     }
-    let pretty_print n = 
-        let sigt = Option.map n.sigt ~f: (fun sigt -> 
-            Pp.(branch [text "SIGNATURE"; sigt |> Type.to_string |> text] [])
-        ) in
-        let scheme = Option.map n.scheme ~f: (fun sch -> 
-            Pp.(branch [text "SCHEME"; sch |> Type.scheme_to_string |> text] [])
-        ) in
-        let result =  Pp.(branch [text "RESULT"; n.result |> Type.to_string |> text] []) in
-        let params = match n.params with 
-            | [] -> None
-            | params -> Some (Pp.(branch [text "PARAMS"] (List.map params ~f: (Param.pretty_print))))
-        in
-        let block = [Pp.(branch [text "BLOCK"] (List.map n.block.stmts ~f: Stmt.pretty_print))] in
-        let args = List.filter_map [sigt; scheme; Some result; params] ~f: (function | Some m -> Some m | None -> None) in
-        Pp.(branch [text "LET"; text ("given:" ^ n.given_name); text ("scope:" ^ n.scope_name)] (args @ block))
 end
 
 and Stmt: sig 
     (* todo: let stmt and block stmt*)
     type t = Expr of Expr.t | Let of Let.t | Block of Block.t
-    val equals: Stmt.t -> Stmt.t -> bool
-    val to_string: Stmt.t -> string
-    val range: Stmt.t -> Span.range
-    val pretty_print: Stmt.t -> Pp.branch
+
+    val range: t -> Span.range
 end = struct 
     type t = Expr of Expr.t | Let of Let.t | Block of Block.t
-    let range = function 
-    | Expr e -> Expr.range e
-    | Let let' -> let'.range
-    | Block b -> b.range
 
-    let equals a b = match (a, b) with
-    | Expr _, Expr _ -> true (* TODO *)
-    | Let _, Let _ -> true
-    | Block ba, Block bb -> Block.equals ba bb
-    | _, _ -> false
-
-    let to_string = function
-    | Expr e -> Expr.to_string e
-    | Let b -> String.concat ["LET "; b.scope_name; "("; b.given_name; ")"; "\n"; Block.to_string b.block]
-    | Block _ -> "block"
-
-    let pretty_print = function 
-        | Block b -> Block.pretty_print b
-        | Let t -> Let.pretty_print t
-        | Expr e -> Expr.pretty_print e
+    let range = function
+        | Expr e -> Expr.range e
+        | Let l -> l.range
+        | Block b -> b.range
 end
+(* TODO: remove *)
 and Block: sig 
-    type t = {range: Span.range; stmts: Stmt.t list}
-    val equals: Block.t -> Block.t -> bool
-    val to_string: Block.t -> string
+    type t = {stmts: Stmt.t list; range: Span.range}
+    (* val equals: Block.t -> Block.t -> bool *)
     val last_stmt_range: Block.t -> Span.range
-    val pretty_print: Block.t -> Pp.branch
 end = struct 
-    type t = {range: Span.range; stmts: Stmt.t list}
+    type t = {stmts: Stmt.t list; range: Span.range}
 
-    let last_stmt_range bl = match bl.stmts with
-        | [] -> bl.range
-        | stmts -> Stmt.range (List.last_exn stmts)
-
-    let pretty_print b = 
-        let stmts = List.map b.stmts ~f: Stmt.pretty_print in 
-            Pp.(branch [text "BLOCK"] stmts)
-
-    let to_string block = List.map block.stmts ~f:Stmt.to_string 
-        |> String.concat ~sep: "\n"
-    let equals a b = if List.length a.stmts <> List.length b.stmts then false else
-        List.zip_exn a.stmts b.stmts 
-        |> List.map ~f:(fun (sa, sb) -> Stmt.equals sa sb) 
-        |> List.find ~f:(fun entry -> not entry) 
-        |> Option.is_none
+    let last_stmt_range _ = (raise Common.TODO) 
 end
 and Tuple: sig 
     type t = {
+        typ: Type.t;
         range: Span.range;
         exprs: Expr.t list
     }
-
-    val pretty_print: t -> Pp.branch
 end = struct
     type t = {
+        typ: Type.t;
         range: Span.range;
         exprs: Expr.t list
     }
-
-    let pretty_print node = Pp.(branch [text "TUPLE"] (List.map ~f: (Expr.pretty_print) node.exprs))
 end
 and Li: sig
     type t = {
+        typ: Type.t;
         range: Span.range;
         items: Expr.t list
     }
-
-    val pretty_print: t -> Pp.branch
 end = struct 
     type t = {
+        typ: Type.t;
         range: Span.range;
         items: Expr.t list
     }
-     
-
-    let pretty_print n = 
-        let items = List.map n.items ~f: (Expr.pretty_print) in
-        Pp.(branch [text "LIST"] items)
 end
 and Lambda: sig 
     type t = {
+        typ: Type.t;
         range: Span.range;
         block: Block.t;
         params: Param.t list;
     }
-    val pretty_print: t -> Pp.branch
 end = struct 
     type t = {
+        typ: Type.t;
         range: Span.range;
         block: Block.t;
         params: Param.t list;
     }
-
-    let pretty_print n = 
-        let params = List.map ~f:Param.pretty_print n.params in
-        let params_branch = Pp.(branch [text "PARAMS"] params) in
-        Pp.(branch [text "LAMBDA"] [params_branch; Block.pretty_print n.block])
 end
 and Match: sig 
     type pattern = 
@@ -335,8 +281,6 @@ and Match: sig
             rest: pattern option
         }
 
-    val pattern_to_type: pattern -> Type.t
-
     type case = {
         (* case_typ: Type.t; *)
         pattern: pattern;
@@ -344,13 +288,12 @@ and Match: sig
     }
     
     type t = {
-        range: Span.range;
         typ: Type.t;
+        range: Span.range;
         expr: Expr.t;
         cases: case list
     }
-
-    val pretty_print: t -> Pp.branch
+    val pattern_to_type: pattern -> Type.t
 end = struct 
     type pattern = 
         | Any
@@ -378,44 +321,18 @@ end = struct
         | List li -> Base_types.list li.item_typ
         | Param p -> p.typ
 
-    let rec pretty_print_pattern = function
-        | Any -> Pp.(branch [text "_"] [])
-        | Unit -> Pp.(branch [text "()"] [])
-        | Int i -> Pp.(branch [text "INT"; text i] [])
-        | Str s -> Pp.(branch [text "STR"; text s] [])
-        | Param p -> Pp.(branch [text "PARAM"; text p.given_name; text p.scope_name; text @@ Type.to_string p.typ] [])
-        | Tuple tup -> Pp.(branch [text "TUPLE"] (List.map tup ~f: pretty_print_pattern))
-        | List li -> Pp.(branch [text "LIST"] [
-            branch [text "ITEMS"] (List.map li.items ~f: pretty_print_pattern);
-            branch [text ".."] (match li.rest with 
-                | Some p -> [pretty_print_pattern p] 
-                | None -> []
-            )])
-
     type case = {
         (* case_typ: Type.t; *)
         pattern: pattern;
         stmts: Stmt.t list
     }
 
-    let pretty_print_case n =
-        Pp.(branch [text "CASE"(*; text @@ Type.to_string n.case_typ*)] [
-            branch [text "PATTERN"] [pretty_print_pattern n.pattern];
-            branch [text "SMTS"] (List.map ~f: Stmt.pretty_print n.stmts)
-        ])
-
     type t = {
-        range: Span.range;
         typ: Type.t;
+        range: Span.range;
         expr: Expr.t;
         cases: case list
     }
-
-    let pretty_print n =
-        Pp.(branch [text "MATCH"; text @@ Type.to_string n.typ] [
-            branch [text "EXPR"] [Expr.pretty_print n.expr];
-            branch [text "CASES"] (List.map ~f:pretty_print_case n.cases)
-        ])
 end
 and Expr: sig 
     type t = 
@@ -429,9 +346,8 @@ and Expr: sig
         | Foreign of Foreign.t
         | Match of Match.t
 
-    val to_string: t -> string
     val range: t -> Span.range
-    val pretty_print:  t -> Pp.branch
+    val typ: t -> Type.t
 end = struct 
     type t = 
         | Value of Value.t
@@ -445,37 +361,26 @@ end = struct
         | Match of Match.t
 
     let range = function
-    | Value v -> v.range
-    | Ident id -> id.range
-    | Apply app -> app.range
-    | Lambda lam -> lam.range
-    | Cond cond -> cond.range
-    | Tuple tup -> tup.range
-    | Foreign f -> f.range
-    | Li l -> l.range
-    | Match m -> m.range
+        | Value v -> v.range
+        | Ident id -> id.range
+        | Apply app -> app.range
+        | Lambda lam -> lam.range
+        | Cond cond -> cond.range
+        | Li li -> li.range
+        | Tuple tu -> tu.range
+        | Foreign fo -> fo.range
+        | Match ma -> ma.range
 
-    let pretty_print = function
-    | Value v -> Value.pretty_print v
-    | Ident id -> Ident.pretty_print id
-    | Apply app -> Apply.pretty_print app
-    | Lambda lam -> Lambda.pretty_print lam
-    | Cond cond -> Cond.pretty_print cond
-    | Tuple tup -> Tuple.pretty_print tup
-    | Foreign f -> Foreign.pretty_print f
-    | Li l -> Li.pretty_print l
-    | Match m -> Match.pretty_print m
-
-    let to_string = function
-    | Value v -> Value.to_string v
-    | Ident id -> Ident.to_string id
-    | Apply _ -> raise Common.TODO 
-    | Lambda _ -> raise Common.TODO
-    | Cond _ -> raise Common.TODO
-    | Tuple _ -> raise Common.TODO
-    | Foreign _ -> raise Common.TODO
-    | Li _ -> raise Common.TODO
-    | Match _ -> raise Common.TODO
+    let typ = function
+        | Value v -> v.typ
+        | Ident id -> id.typ
+        | Apply app -> app.typ
+        | Lambda lam -> lam.typ
+        | Cond cond -> cond.typ
+        | Li li -> li.typ
+        | Tuple tu -> tu.typ
+        | Foreign fo -> fo.typ
+        | Match ma -> ma.typ
 end
 
 module Import = struct 
@@ -490,10 +395,33 @@ module Import = struct
         source: string Span.t;
         names: name list;
     }
+end
 
-    let pretty_print n = 
-        let open Pp in
-        let exact = List.map n.names ~f: (fun m -> 
+module Module = struct
+    type entry = Binding of Let.t | Import of Import.t | Module of t
+    and t = {
+        given_name: string;
+        scope_name: string;
+        entries: entry list;
+        exposed: Symbol.Module.exposed StringMap.t;
+    }
+end
+
+module Print_node = struct 
+    open Pp 
+
+    (* let typed ~fn n = 
+        text ((Span.range_str n.range) ^ ":" ^ (Type.to_string n.typ) ^ "#" ^ () *)
+
+    let rec modu n = 
+        let entries = List.map Module.(n.entries) ~f: (function 
+            | Binding t -> let' t
+            | Import i -> import i
+            | Module m -> modu m
+        ) in
+        Pp.(branch [text "MODULE"; text n.given_name; text n.scope_name] entries)
+    and import n = 
+        let exact = List.map Import.(n.names) ~f: (fun m -> 
             let resolved = match m.resolved with
                 | None -> []
                 | Some {typedef; modu; binding} -> 
@@ -510,22 +438,154 @@ module Import = struct
             branch [spanned m.name; m.path |> List.map ~f: (fun s -> Span.(s.value)) |> String.concat |> text] resolved
         ) in
         branch [text "import"; spanned n.source] exact
-end
 
-module Module = struct
-    type entry = Binding of Let.t | Import of Import.t | Module of t
-    and t = {
-        given_name: string;
-        scope_name: string;
-        entries: entry list;
-        exposed: Symbol.Module.exposed StringMap.t;
-    }
+    and expr e = 
+        let open Expr in 
+        match e with
+        | Value v -> value v
+        | Ident id -> ident id
+        | Apply app -> apply app
+        | Lambda lam -> lambda lam
+        | Cond c -> cond c
+        | Tuple tup -> tuple tup
+        | Foreign f -> foreign f
+        | Li l -> list l
+        | Match m -> matc m
 
-    let rec pretty_print n = 
-        let entries = List.map n.entries ~f: (function 
-            | Binding t -> Let.pretty_print t
-            | Import i -> Import.pretty_print i
-            | Module m -> pretty_print m
+    and pattern p = 
+        let open Match in 
+        match p with
+        | Any -> branch [text "_"] []
+        | Unit -> branch [text "()"] []
+        | Int i -> branch [text "INT"; text i] []
+        | Str s -> branch [text "STR"; text s] []
+        | Param p -> branch [text "PARAM"; text p.given_name; text p.scope_name; text @@ Type.to_string p.typ] []
+        | Tuple tup -> branch [text "TUPLE"] (List.map tup ~f: pattern)
+        | List li -> branch [text "LIST"] [
+            branch [text "ITEMS"] (List.map li.items ~f: pattern);
+            branch [text ".."] (match li.rest with 
+                | Some p -> [pattern p] 
+                | None -> []
+            )]
+    and case n =
+        branch [text "CASE"(*; text @@ Type.to_string n.case_typ*)] [
+            branch [text "PATTERN"] [pattern Match.(n.pattern)];
+            branch [text "SMTS"] (List.map ~f:stmt n.stmts)
+        ]
+
+    and matc n =
+        branch [text "MATCH"; text @@ Type.to_string n.typ] [
+            branch [text "EXPR"] [expr n.expr];
+            branch [text "CASES"] (List.map ~f:case n.cases)
+        ]
+
+    and lambda n = 
+        let params = List.map ~f:param n.params in
+        let params_branch = Pp.(branch [text "PARAMS"] params) in
+        branch [text "LAMBDA"; text (Type.to_string n.typ)] [params_branch; block n.block]
+
+    and list n = 
+        let items = List.map n.items ~f:expr in
+        branch [text "LIST"] items
+
+    and tuple n = branch [text "TUPLE"] (List.map ~f:expr n.exprs)
+
+    and block n = 
+        let stmts = List.map n.stmts ~f: stmt in 
+            branch [text "BLOCK"] stmts
+
+    and stmt n = 
+        let open Stmt in 
+        match n with 
+        | Block b -> block b
+        | Let t -> let' t
+        | Expr e -> expr e
+
+    and let' n = 
+        let sigt = Option.map n.sigt ~f: (fun sigt -> 
+            branch [text "SIGNATURE"; sigt |> Type.to_string |> text] []
         ) in
-        Pp.(branch [text "MODULE"; text n.given_name; text n.scope_name] entries)
+        let scheme = Option.map n.scheme ~f: (fun sch -> 
+            branch [text "SCHEME"; sch |> Type.scheme_to_string |> text] []
+        ) in
+        let result = branch [text "RESULT"; n.result |> Type.to_string |> text] [] in
+        let params = match n.params with 
+            | [] -> None
+            | params -> Some (branch [text "PARAMS"] (List.map params ~f: param))
+        in
+        let block = [branch [text "BLOCK"] (List.map n.block.stmts ~f: stmt)] in
+        let args = List.filter_map [sigt; scheme; Some result; params] ~f: (function | Some m -> Some m | None -> None) in
+        branch [text "LET"; text ("given:" ^ n.given_name); text ("scope:" ^ n.scope_name)] (args @ block)
+
+    and ident n = 
+        let resolved r = 
+            let abs = match Symbol.Resolved.(r.absolute) with
+            | None -> "<unresolved>"
+            | Some m -> Symbol.Id.to_string m
+            in r.given ^ "(" ^ abs ^ ")"
+        in
+        let names = n.resolution 
+            |> List.map ~f:resolved 
+            |> String.concat ~sep: "."
+        in branch [
+            text "IDENT"; 
+            text @@ "resolved:" ^ (resolved n.resolved);
+            text names;
+            text @@ "type:" ^ (Type.to_string n.typ)
+        ] []
+
+    and foreign m = 
+        let scheme_str = match m.scheme with
+        | None -> "<no scheme>"
+        | Some m -> Type.scheme_to_string m
+        in
+        branch [text "FOREIGN"; text m.name; text scheme_str] []
+
+    and value n = branch [text "VALUE"; n.typ |> Type.to_string |> text; text n.value] []
+
+    and apply n = 
+        let open Apply in 
+        let pp_arg = function
+            | PosArg {expr = e} -> branch [text "POS_ARG"] [expr e]
+            | NameArg {name; expr = e} -> branch [text "NAME_ARG"; spanned name] [expr e]
+            (* | PunArg {ident} -> branch [text "PUN_ARG"] [Ident.pretty_print ident] *)
+        in
+        let fn = [expr n.fn] in
+        let args = List.map n.args ~f: pp_arg in
+        (* TODO: debug result *)
+        branch [text "APPLY"; text @@ Type.to_string n.typ]  (fn @ args)
+
+    and cond c = 
+        let cases = List.map c.cases ~f: (fun case ->
+            let if_branch = Pp.(branch [text "IF"] (List.map ~f: stmt case.if_.stmts)) in 
+            let then_branch = Pp.(branch [text "THEN"] (List.map ~f: stmt case.then_.stmts)) in 
+            Pp.(branch [text "CASE"] [if_branch; then_branch])
+        ) in 
+        let else_ = match c.else_ with 
+        | None -> []
+        | Some else_ -> 
+            [branch [text "ELSE"] (List.map ~f:stmt else_.stmts)]
+        in
+        branch [text "COND"] (cases @ else_)
+
+    and param p = 
+        let open Param in 
+        let format_name n = Param.(n.given) ^ "(" ^ n.scope ^ ")" in
+        let rec param_pattern = function
+            | Unit -> branch [text "()"] []
+            | Name name -> branch [text (format_name name)] []
+            | Tuple t -> branch [text "TUPLE"] (t |> List.map ~f: param_pattern)
+        in
+        let typ = Param.(p.typ) |> Type.to_string |> text in
+        match Param.(p.value) with
+        | Param.Positional {pattern} -> branch [text "POS"; typ] [param_pattern pattern]
+        | Param.Named {name} -> branch [text "NAMED"; text (format_name name); typ] []
+        | Param.Optional {name; default} -> 
+            let default = match default with
+            | None -> []
+            | Some e -> [expr e]
+            in
+            branch [text "OPT"; text (format_name name); typ] (default @ [])
+        | Param.Extension {name} -> 
+            branch [text "EXT"; text (format_name name); typ] []
 end

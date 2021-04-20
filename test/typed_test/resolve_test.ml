@@ -1,7 +1,11 @@
 open Common
 open Helper
 open Typed
-open Base
+
+let pp_compare pp expect got =
+    let pp_expect = Pp.to_string [pp expect] in
+    let pp_got = Pp.to_string [pp got] in
+    Alcotest.(check string) pp_expect pp_got
 
 let shadowing () =
     let input = [
@@ -10,7 +14,7 @@ let shadowing () =
     ] in
     let input_block = (Block.{stmts=input; range = Span.empty_range}) in
     let global = Resolver.Scope.root "" in
-    let ctx = Resolve.make_context (Resolver.Scope.toplevel global) in
+    let ctx = Resolve.Ctx.make (Resolver.Scope.toplevel global) in
     let resolved = Resolve.block ctx input_block in
     let expect = Block.{
         range = Span.empty_range;
@@ -19,13 +23,7 @@ let shadowing () =
             let_stmt ~scope_name: "a$2" "a" [value_stmt "str" (Base_types.str)]
         ]
     } in
-    if not @@ (Block.equals resolved input_block) then
-        Alcotest.fail @@ String.concat ~sep: "\n" [
-            "expected:";
-            (Block.to_string expect);
-            "got:";
-            (Block.to_string resolved);
-        ]
+    pp_compare (Typed.Node.Print_node.block) expect resolved
 
 let tests = [
     "shadowing", `Quick, shadowing

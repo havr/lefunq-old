@@ -53,11 +53,11 @@ let test ?(expect_errors=[]) ~code ~expect =
             |> Alcotest.fail
         )
     | Error got_errors -> (
-        let got_errors = List.map got_errors ~f: (Typed.Erro.clear_range) in
-        let (missing_expected, unexpected) = split ~equals: (Typed.Erro.equals) expect_errors got_errors in
+        let got_errors = List.map got_errors ~f: (Typed.Errors.clear_range) in
+        let (missing_expected, unexpected) = split ~equals: (Typed.Errors.equals) expect_errors got_errors in
         if List.length missing_expected > 0 || List.length unexpected > 0 then begin 
-            let missing_expected_str = List.map missing_expected ~f: (Typed.Erro.to_string) in
-            let unexpected_str = List.map unexpected ~f: (Typed.Erro.to_string) in
+            let missing_expected_str = List.map missing_expected ~f: (Typed.Errors.to_string) in
+            let unexpected_str = List.map unexpected ~f: (Typed.Errors.to_string) in
             let missing_expected_block = match missing_expected_str with 
             | [] -> ""
             | errs -> "Missing expected:\n" ^ (String.concat ~sep:"\n" errs) ^ "\n"
@@ -165,7 +165,7 @@ let test_multiple_item_list () =
 let test_type_mismatch_test() =
     test
     ~expect_errors: [
-        Typed.Erro.ListItemTypeMismatch {
+        Typed.Errors.ListItemTypeMismatch {
             range = Span.empty_range;
             unexpected = Base_types.str;
             expected = Base_types.int

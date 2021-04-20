@@ -1,7 +1,7 @@
 open Typed
 open Base
 open Helper
-open Typed_test__infer__helper
+open Typed_infer_helper
 
 let test ?(errors=[]) ~stmts ~expect_type ~expect = 
     let ctx = Inferno.{
@@ -31,8 +31,8 @@ let let_single () = test
 let let_lambda () = test
     ~stmts: [
         let_stmt "hello" [
-            lambda_stmt [Param.{given = "a"; resolved= ""}, Type.Var "t"] [
-            local_ident_stmt ~scheme:(Type.make_scheme [] (Type.Var "t")) "a"
+            lambda_stmt ["a", Type.Var "t"] [
+                local_ident_stmt ~typ:(Type.Var "t") "a"
             ]
         ];
         local_ident_stmt "hello"

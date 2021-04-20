@@ -27,3 +27,29 @@ module Lambdas = struct
         let args = List.map param_args ~f: (fun (_, arg) -> arg) in
         Expr.call args @@ Expr.parens (Expr.lambda params body)
 end
+
+module Apply = struct 
+    let rec curried fn = function
+        | [] -> fn
+        | arg :: rest -> 
+            let map_arg = match arg with
+                (* TODO: keep it as is, remove voids when optimize ast *)
+                | Ast.Expr.Void -> []
+                | arg -> [arg]
+            in
+            curried (Ast.Expr.Apply (Ast.Apply.make fn map_arg)) rest
+end
+
+module Lambda = struct
+    let curried args body = 
+        let rec loop = function
+            | [] -> body
+            | arg :: rest -> 
+                let args = if String.is_empty arg then [] else [arg] in
+                Ast.Expr.Lambda (Ast.Lambda.make args [Ast.Block.Return (Ast.Return.make (loop rest))])
+        in loop args
+end
+
+module Const = struct 
+    let expr name e= Ast.Block.Const (Ast.Const.{name; expr = Ast.Const.Expr e})
+end

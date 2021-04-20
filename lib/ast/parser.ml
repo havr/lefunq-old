@@ -66,7 +66,10 @@ module Lexemes = struct
     let modu = match_map(function | Module -> Some () | _ -> None)
     let pipe = match_map(function | Pipe -> Some () | _ -> None)
     let spread = match_map(function | Spread -> Some () | _ -> None)
+    (* TODO: s/matc/question *)
     let matc = match_map(function | Match -> Some () | _ -> None)
+    let ampersand = match_map(function | Ampersand -> Some () | _ -> None)
+    let colon = match_map(function | Colon -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -156,7 +159,7 @@ let separated_by sep p =
     and+ rest = many separated_elem in
         (first :: rest)
 
-module Arg = struct 
+(* module Arg = struct 
     let rec ident() = 
         let+ ident = Lexemes.ident in
         Node.Arg.{span = ident.range; ident = ident.value}
@@ -175,7 +178,7 @@ module Arg = struct
         (fun () -> map (tuple()) (fun v -> Node.Arg.Tuple v));
         (fun () -> map (ident()) (fun v -> Node.Arg.Ident v))
     ]
-end
+end *)
 
 let rec last_list_item = function
 | [] -> raise (Invalid_argument "no arguments are provided")
@@ -198,7 +201,7 @@ let merge_spanned fn = function
 
 let (pattern_block: unit -> Node.Match.cases Comb.t), set_pattern_block = forward_decl ()
 
-let type' =
+module Type = struct 
     let rec typ' () = choicef [
         (fun () -> lambda ());
         (fun () -> simple ());
@@ -231,9 +234,96 @@ let type' =
         | [] -> Node.Type.Unit
         | [n] -> n
         | items -> Node.Type.Tuple { items }
-    in typ'
 
-let scheme = type'
+    let param_typ = choicef [
+        (fun () -> simple ());
+        (fun () -> tuple ());
+    ]
+end
+
+let scheme = Type.typ'
+
+module Param = struct 
+    let block_param ~expr = 
+        let+ name = Lexemes.ident
+        and+ opt = maybe @@ Lexemes.matc 
+        and+ typ = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ typ = Type.param_typ in typ)
+        and+ default = maybe @@ (
+            let+ _ = Lexemes.eq
+            and+ e = expect @@ ignore_newline @@ (expr ()) in e
+        ) in match (opt, default) with 
+            | None, None -> Node.Param.Named {name; typ}
+            | _, expr -> Node.Param.Optional {name; typ; expr}
+
+    let block ~expr = 
+        let semi = 
+            let+ _ = maybe newlines 
+            and+ _ = Lexemes.semi
+            and+ _ = maybe newlines in ()
+        in
+        let+ _ = Lexemes.open_block
+        and+ params = expect @@ ignore_newline @@ separated_by_with_traliing (
+            choice [ semi; newlines ]
+        ) (block_param ~expr)
+        and+ _ = expect @@ ignore_newline @@ Lexemes.close_block in
+        params
+
+    let extension = 
+        let+ _ = Lexemes.spread
+        and+ name = expect @@ Lexemes.ident
+        and+ typ = expect @@ (
+            let+ _ = Lexemes.colon
+            and+ typ = Type.param_typ in typ
+        ) in [Node.Param.Extension {name; typ}]
+
+    let single_block_param ~expr = 
+        let+ _ = Lexemes.open_paren
+        and+ param = expect @@ ignore_newline @@ (block_param ~expr)
+        and+ _ = expect @@ ignore_newline @@ Lexemes.close_paren in [param]
+
+    let single = 
+        let+ name = Lexemes.ident
+        and+ opt = maybe @@ Lexemes.matc 
+        and+ typ = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ typ = Type.param_typ in typ) 
+        in match opt with
+        | None -> [Node.Param.Named {name; typ}]
+        | Some _ -> [Node.Param.Optional {name; typ; expr = None}]
+        
+
+    let named ~expr = 
+        let+ _ = Lexemes.ampersand 
+        and+ value = choice [
+            block ~expr; extension; single; single_block_param ~expr
+        ] in value
+
+    let rec ident() = 
+        let+ ident = Lexemes.ident in
+        Node.Param.Ident (ident)
+
+    and tuple() = 
+        let+ _ = Lexemes.open_paren 
+        (* todo: annotate *)
+        and+ elems = maybe @@ separated_by Lexemes.coma (positional ())
+        and+ _ = expect 
+            ~ctx: "tuple" 
+            ~exp: "close brace" 
+            @@ ignore_newline @@ Lexemes.close_paren in
+        Node.Param.Tuple(Option.value ~default: [] elems)
+
+    and positional () = choicef [
+        (fun () -> (tuple()));
+        (fun () -> ident())
+    ]
+
+    let param ~expr = choicef [
+        (fun () -> map (positional()) (fun shape -> [Node.Param.Positional {shape; typ = None}]));
+        (fun () -> named ~expr);
+    ]
+end
 
 let import = 
     let rename = 
@@ -356,11 +446,12 @@ and cond () =
                 then_=then_expr;
             else_=Some else_expr
                 }
-and fn_arg () =
+and fn_expr () =
     (* Common.log [Common.stacktrace ()]; *)
     let parens () = 
         let+ open_paren = Lexemes.open_paren 
         and+ expr = maybe @@ (tuple_expr ())
+
         and+ close_paren = expect @@ ignore_newline @@ Lexemes.close_paren in
         match expr with
         | None -> Node.Expr.Value (Node.Value.Unit (Span.merged open_paren.range close_paren.range ()))
@@ -372,17 +463,52 @@ and fn_arg () =
         (fun () -> parens ());
         (fun () -> map (value ()) (fun v -> Node.Expr.Value v))
     ]
+and fn_arg () = 
+    let named =
+        let arg =
+            let+ name = Lexemes.ident
+            and+ e = maybe @@ (
+                let+ _ = Lexemes.colon
+                and+ e = ignore_newline @@ fn_expr() in e
+            ) in match e with 
+                | Some expr -> Node.Apply.NameArg {name; expr}
+                | None -> Node.Apply.PunArg {name}
+        in
+        let block = 
+            let semi = 
+                let+ _ = maybe newlines 
+                and+ _ = Lexemes.semi
+                and+ _ = maybe newlines in ()
+            in
+            let+ _ = Lexemes.open_block
+            and+ args = expect @@ ignore_newline @@ separated_by_with_traliing (
+                choice [ semi; newlines ]
+            ) arg
+            and+ _ = expect @@ ignore_newline @@ Lexemes.close_block
+            in args
+        in
+        let+ _ = Lexemes.ampersand
+        and+ value = choice [
+            block; 
+            map arg (fun arg -> [arg])
+        ] in value
+    in
+    let unnamed =
+        map (fn_expr ()) (fun expr -> [Node.Apply.PosArg {expr}])
+    in choice [unnamed; named]
 and fn () = 
-    let+ cell = fn_arg() 
+    let+ cell = fn_expr() 
     (* TODO: parens and expressions here!!! *)
     and+ args = many (fn_arg ()) in
         match args with
         | [] -> cell 
-        | some -> Node.Expr.Apply Node.Apply.{
-            fn = cell;
-            args = some;
-            range = Span.merge (Node.Expr.range cell) (Node.Expr.range (List.last_exn some))
-        }
+        | some -> 
+            let args = Util.Lists.flatten some in
+            Node.Expr.Apply Node.Apply.{
+                fn = cell;
+                args = args;
+                range = Span.merge (Node.Expr.range cell) (List.last_exn args |> Node.Apply.arg_range)
+            }
 
 and list () = 
     let semi = 
@@ -431,7 +557,10 @@ and unary () =
             range=(Span.merge v.range (Node.Expr.range arg));
             fn=op_fn;
             (* TODO: use "unary" *)
-            args=[Node.Expr.Value (Node.Value.Int (Span.from (Span.empty_range) "0")); arg]
+            args=[
+                Node.Apply.PosArg {expr = Node.Expr.Value (Node.Value.Int (Span.from (Span.empty_range) "0"))};
+                Node.Apply.PosArg {expr = arg}
+            ]
         }
     in
     let+ ops = many 
@@ -442,7 +571,6 @@ and unary () =
         and+ block = ignore_newline @@ expect @@ pattern_block () in block
     ) in
     let expr = make ex ops in
-    Common.log["expr is"; Pp.to_string [Node.Expr.pretty_print @@ expr]];
     match matc with
     | None -> expr
     | Some cases -> Node.Expr.Match (Node.Match.{
@@ -467,7 +595,7 @@ and binary' = function
             loop @@ Node.Expr.Apply Node.Apply.{
                 range = (Span.merge (Node.Expr.range result) (Node.Expr.range right));
                 fn=(Node.Expr.Value (Node.Value.Ident lexeme));
-                args=[result; right]
+                args=[Node.Apply.PosArg{expr=result}; Node.Apply.PosArg{expr=right}]
             }
     in
     let* left = binary' higher in
@@ -512,7 +640,7 @@ and expr () = tuple_expr ()
     | Some e -> e *)
 and sig_ () =
     let+ _ = Lexemes.sig'
-    and+ typ = expect @@ type' () 
+    and+ typ = expect @@ Type.typ' () 
     and+ let' = expect @@ ignore_newline @@ let_ () in
     Node.Let.{let' with sig' = Some typ}
 and let_ () = 
@@ -529,21 +657,21 @@ and let_ () =
         ~ctx:"let" 
         ~exp:"identifier" 
         @@ ignore_newline @@ let_ident
-    and+ args = many @@ (Arg.arg ())
+    and+ params = many @@ (Param.param ~expr)
     and+ _ = expect 
         ~ctx:"let" 
         ~exp:"=" 
         @@ ignore_newline @@ Lexemes.eq
     and+ ex = expect ~ctx: "le rhs" 
         @@ ignore_newline @@ let_rhs in
-    let arg_list = match args with 
+    let param_list = match Util.Lists.flatten params with 
         | [] -> None 
-        | args -> Some Node.Arg.{args=args} 
+        | params -> Some params
     in Node.Let.{
         sig' = None;
         range = Span.merge keyword.range (Node.Let.expr_range ex);
         is_rec = Option.is_some rec_;
-        args = arg_list;
+        params = param_list;
         ident = ident;
         expr = ex
     }
@@ -573,11 +701,11 @@ and block_stmts () = many (Comb.wrap_fn block_stmt)
 
 and lambda () =
     let+ start = Lexemes.lambda
-    and+ args = many @@ (Arg.arg ())
+    and+ params = many @@ (Param.param ~expr)
     and+ b = (block ()) in
         Node.Lambda.{
             range=Span.merge start.range b.range;
-            args={args=args};
+            params = Util.Lists.flatten params;
             block=b
         }
 

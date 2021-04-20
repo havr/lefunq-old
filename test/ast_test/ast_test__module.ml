@@ -47,7 +47,7 @@ let tests = [
                 Module.Let (Let.{
                     sig' = None;
                     range = Span.empty_range;
-                    args = None;
+                    params = None;
                     ident = Span.empty "a";
                     expr = Let.Expr (Expr.Value (Value.Int (Span.empty "10")));
                     is_rec = false

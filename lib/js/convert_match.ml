@@ -62,7 +62,7 @@ let pattern_checks accessor pattern =
 let match' ~stmts ~map_return accessor cases =
     let else', cases = Util.Lists.last_rest cases in
     let inject_return params s = 
-        let block = List.map params ~f: (fun (scope_name, expr) -> (Ast.Block.Const (Ast.const_expr scope_name expr))) in
+        let block = List.map params ~f: (fun (scope_name, expr) -> (Ast.Block.Const (Ast.Const.expr scope_name expr))) in
         let ret, intern = Util.Lists.last_rest (block @ Typed.Node.Match.(stmts s.stmts)) in
         intern @ [map_return ret]
     in

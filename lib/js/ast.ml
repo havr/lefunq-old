@@ -37,9 +37,16 @@ exception Unexpected of string
 module rec Const: sig 
     type expr = Expr of Expr.t | Block of Block.t
     and t = {name: string; expr: expr}
+    val make: string -> expr -> t
+    val block: string -> Block.stmt list -> t
+    val expr: string -> Expr.t -> t
 end = struct 
     type expr = Expr of Expr.t | Block of Block.t
     and t = {name: string; expr: expr}
+
+    let make name expr = {name; expr}
+    let block name stmts = {name; expr = Block Block.{stmts}}
+    let expr name expr = {name; expr = Expr expr}
 end
 and Str: sig 
     type t = {value: string}
@@ -49,8 +56,13 @@ end
 
 and Num: sig 
     type t = {value: string}
+
+    val make: string -> t
+    val from_int: int -> t
 end = struct
     type t = {value: string}
+    let make value = {value}
+    let from_int n = {value = Int.to_string n}
 end
 
 and Ident: sig 
@@ -71,14 +83,18 @@ end
 
 and Binary: sig 
     type t = { op: string; left: Expr.t; right: Expr.t} 
+    val make: string -> Expr.t -> Expr.t -> t
 end = struct
     type t = { op: string; left: Expr.t; right: Expr.t} 
+    let make op left right = {op; left; right}
 end
 
 and Apply: sig 
     type t = { fn: Expr.t; args: Expr.t list}
+    val make: Expr.t -> Expr.t list -> t
 end = struct
     type t = { fn: Expr.t; args: Expr.t list}
+    let make fn args = {fn; args}
 end
 and Lambda: sig 
     type t = {params: string list; block: Block.t}
@@ -98,16 +114,20 @@ and Block: sig
     type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t | Assign of Assign.t
     and t = {stmts: stmt list}
     val assign: Assign.t -> stmt
+    val make: stmt list -> t
 end = struct
     type stmt = Expr of Expr.t | Const of Const.t | Return of Return.t | Cond of Cond.t | Block of Block.t | Assign of Assign.t
     and t = {stmts: stmt list}
     let assign a = Assign a
+    let make stmts = {stmts}
 end
 
 and Index: sig 
     type t = {expr: Expr.t; value: Expr.t}
+    val make: Expr.t -> Expr.t -> t
 end = struct 
     type t = {expr: Expr.t; value: Expr.t}
+    let make expr value = {expr; value}
 end
 and Object: sig 
     type entry = | Kv of (string * Expr.t) | Pun of string
@@ -131,6 +151,13 @@ end = struct
     type t = {expr: Expr.t; args: Expr.t list}
 end
 
+and Ternary: sig 
+    type t = {expr: Expr.t; then': Expr.t; else': Expr.t}
+    val make: Expr.t -> Expr.t -> Expr.t -> t
+end = struct 
+    type t = {expr: Expr.t; then': Expr.t; else': Expr.t}
+    let make expr then' else' = {expr; then'; else'}
+end
 and Expr: sig 
     type t = 
         | Num of Num.t 
@@ -145,9 +172,11 @@ and Expr: sig
         | Parens of Expr.t
         | Li of (Expr.t list)
         | Void
+        | Null
         | Index of Index.t
         | Property of Property.t
         | Call of Call.t
+        | Ternary of Ternary.t
 
     val ident: Ident.t -> t
 end = struct
@@ -164,17 +193,21 @@ end = struct
         | Parens of Expr.t
         | Li of (Expr.t list)
         | Void
+        | Null
         | Index of Index.t
         | Property of Property.t
         | Call of Call.t
+        | Ternary of Ternary.t
 
     let ident id = Ident id
 end
 
 and Return: sig 
     type t = {expr: Expr.t}
+    val make: Expr.t -> t
 end = struct
     type t = {expr: Expr.t}
+    let make expr = {expr}
 end
 
 and Cond: sig 
@@ -200,6 +233,7 @@ let join by exprs =
     Printer.seq (List.intersperse exprs ~sep: by)
 
 let surround_by_strs start fin expr = Printer.(seq [str start; expr; str fin])
+
 module Prn = struct
     open Printer
 
@@ -219,8 +253,6 @@ module Prn = struct
             (str n.name);
             (str "=");
             const_block;
-            (str ";");
-            newline
         ]
     and cond n =
         let ifs = (Cond.(n.conds) |> List.map(fun Cond.{if_; then_} -> 
@@ -242,7 +274,7 @@ module Prn = struct
         seq [
             str "(() => {"; 
             newline;
-            stmts n.stmts;
+            ident_up [stmts n.stmts];
             str "}) ()"; 
         ] 
     and binary n = separated [
@@ -263,9 +295,17 @@ module Prn = struct
         | Expr.Object n -> objec' n
         | Expr.Ident n -> ident n
         | Expr.Void -> void
+        | Expr.Null -> str "null"
         | Expr.Str n -> string n
         | Expr.Binary n -> binary n
         | Expr.Block n -> block n
+        | Expr.Ternary t -> 
+            let in_braces = surround_by_strs "(" ")" in
+            (in_braces (expr t.expr)) 
+                |*| (str " ? ")
+                |*| (in_braces (expr t.then'))
+                |*| (str " : ")
+                |*| (in_braces (expr t.else'))
         | Expr.Call n -> 
             let open Base in
             let args = Call.(n.args)
@@ -285,11 +325,15 @@ module Prn = struct
                 expr n.expr;
             ]
         | Expr.Apply n ->
-            let fn = match Apply.(n.fn) with
+            (* let fn = match Apply.(n.fn) with
             | Ident id -> ident id
-            | fn -> seq [str "("; expr fn; str ")"]
-            in seq [
-                fn;
+            | fn -> seq [str "("; expr fn; str ")"] *)
+            let wrap = match Apply.(n.fn) with
+                | Expr.Lambda _ -> surround_by_strs "(" ")"
+                | _ -> (fun n -> n)
+            in
+            seq [
+                wrap (expr n.fn);
                 str "(";
                 seq ~sep: ", " (List.map expr n.args);
                 str ")";
@@ -298,12 +342,10 @@ module Prn = struct
     and lambda n = 
         let args = Lambda.(n.params) |> List.map(fun param -> str param) |> separate (str ", ") in
         let args_tuple = seq[str "("; seq args; str ")"] in
-        let args_block = stmts Lambda.(n.block.stmts) in
-            seq [args_tuple; str "=>"; str "{"; newline; ident_up [args_block]; str "}"]
+        let body = (match n.block.stmts with
+            (* simplify on the cleaning stage *)
+            | Block.Return {expr = e} :: [] -> expr e
+            | s -> seq [str "{"; newline; ident_up [stmts s]; str "}"]
+        ) in
+            seq [args_tuple; str " => "; body]
 end
-
-(* TODO: name -> const_name, const_block *)
-
-let const name expr = Const.{name; expr}
-let const_block name stmts = Const.{name; expr = Const.Block Block.{stmts}}
-let const_expr name expr = Const.{name; expr = Const.Expr expr}

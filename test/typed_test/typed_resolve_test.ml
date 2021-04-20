@@ -1,4 +1,4 @@
-(* open Common *)
+(* open Common
 open Base
 open Typed
 
@@ -8,16 +8,16 @@ let check_result args_expect args_got =
         if not @@ Param.equals expect got then
             Alcotest.fail @@ String.concat ~sep: " " [
                 "arg mismatch:";
-                Param.to_string expect;
+                (Pp.to_string [Param.pretty_print expect]);
                 "!=";
-                Param.to_string got;
+                (Pp.to_string [Param.pretty_print got]);
             ]
     ) 
 
 let test ~given ~expect =
     (* TODO: make TypeNamer a function *)
     let gen = Type_util.make_tempvar_gen "t" in
-    let typed = Resolve.type_params gen given in
+    let typed = Resolve.Params.type_params gen given in
     check_result expect typed
 
 let ident_param ?typ name = Param.{shape = Param.Name Param.{resolved=name; given=name}; type'=Option.value ~default: Type.Unknown typ}
@@ -75,4 +75,4 @@ let simple_tuple () =
 let tests = [
     "simple_name", `Quick, simple_name;
     "simple_tuple", `Quick, simple_tuple
-]
+] *)

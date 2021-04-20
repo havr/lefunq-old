@@ -28,3 +28,5 @@ let range_str r =
         (Pos.to_str r.start) ^ "-" ^ (Pos.to_str r.end')
 
 let empty_range = {start = Pos.empty; end' = Pos.empty}
+
+let map ~f span = {span with value = f span.value}

@@ -14,6 +14,7 @@ exception TODO
 
 module StringMap = Map.M(String)
 module StringSet = Set.M(String)
+module IntMap = Map.M(Int)
 
 module Err = struct 
     type context = {lines: string list; start_line: int}
@@ -119,10 +120,25 @@ module Util = struct
         let surround start fin str = start ^ str ^ fin
     end
     module Lists = struct 
+        let pick ~f list = 
+            let rec pick' head = function
+                | [] -> None
+                | h :: rest -> (match f h with
+                    | true -> Some (h, (List.rev head) @ rest)
+                    | false -> pick' (h :: head) rest
+                )
+            in pick' [] list
+
         let last_rest l = match List.rev l with
         | [] -> raise (Invalid_argument "list is empty")
         | last :: rest -> (last, List.rev rest)
 
+        let map2 ~f a b = 
+            let a', b' = List.zip_exn a b 
+                |> List.fold ~init: ([], []) ~f: (fun (ar, br) (a, b) -> 
+                    let (a', b') = f (a, b) in (a' :: ar, b' :: br)) 
+            in (List.rev a', List.rev b')
+            
         let flat_map ~f = List.fold ~init: [] ~f: (fun acc item -> acc @ (f item))
         let flatten = List.fold ~init: [] ~f: (fun acc item -> acc @ item)
         let zipmap_default x y ~f ~default = 
