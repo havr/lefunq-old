@@ -1,64 +1,59 @@
 open Base
 open Node
 open Common
+open Typed_common
 
 module TyNode = Node
 module AstNode = Ast.Node
 
-let rec typ = function
-    | AstNode.Type.Lambda {arg; result} -> Type.Lambda (Type.PosParam (typ arg), typ result)
+let rec type_ident = function
+    | AstNode.Type.Lambda {arg; result} -> 
+        TyNode.TypeIdent.Lambda {
+            arg = TyNode.TypeIdent.{optional = false; label = ""; typ = type_ident arg};
+            result = type_ident result
+        }
     (* TODO: type params *)
-    | AstNode.Type.Simple {name; _} -> Type.Simple (name.value, [])
-    | AstNode.Type.Tuple {items} -> Type.Tuple (items |> List.map ~f: typ)
-    | AstNode.Type.Unit -> Base_types.unit 
+    | AstNode.Type.Var {name} -> TyNode.TypeIdent.Var {given = name}
+    | AstNode.Type.Simple {name; args} -> 
+        TyNode.TypeIdent.Simple {
+            given = name;
+            name = Type.make_name (Qualified.from_string name.value) Type.Unresolved;
+            args = List.map args ~f:type_ident;
+        }
+    | AstNode.Type.Tuple {items} -> TyNode.TypeIdent.Tuple {items = items |> List.map ~f: type_ident}
+    | AstNode.Type.Unit -> TyNode.TypeIdent.Unit
 
-let import import = 
-    let rec nested_names path names = 
-        List.concat @@ List.map names ~f:(fun entry ->
-            match (Ast.Node.Import.(entry.rename), entry.nested) with
-            | None, None -> [ TyNode.Import.{
-                    name = entry.name;
-                    path = path @ [entry.name];
-                    resolved = None
-                } ]
-            | Some rename, None -> [ TyNode.Import.{
-                    name = rename;
-                    path = path @ [rename];
-                    resolved = None
-                } ]
-            | None, Some nested ->
-                nested_names (path @ [entry.name]) nested
-            | Some _, Some _-> raise Common.Unexpected
-        ) 
-    in TyNode.Import.{
-        source = Ast.Node.Import.(import.source.name);
-        resolved_source = "";
-        names = match import.source.nested with
-        | Some nested -> nested_names [] nested
-        | None -> []
+let using u = 
+    let rec nested path = Util.Lists.flat_map ~f: (function 
+        | AstNode.Using.Wildcard _ -> [Using.Wildcard, path]
+        | AstNode.Using.Ident {name; action} -> match (action) with
+            | None -> [(Using.Only name),  path @ [name]]
+            | Some (Rename newname) -> [(Using.Only newname), path @ [name]]
+            | Some (Nested names) -> nested (path @ [name]) names
+    ) in
+    let root = match AstNode.Using.(u.kind) with
+        | Local name -> Using.Local name 
+        (* TODO: AstNode.Using.Source  *)
+        | Global name -> Using.Source {name; resolved= ""}
+    in
+    let names = match u.action with
+        | Nested items -> nested [] items
+        | Rename rename -> [(Using.Only rename), []]
+    in
+    Using.{
+        root; names; resolved = []
     }
-    (* let names = match AstNode.Import.(import.name) with
-    | None -> []
-    | Some n -> [TyNode.Import.{name = n; path=[]; resolved=None}]
-    in TyNode.Import.{
-        source = import.source;
-        names = names 
-    } *)
 
 
 let make_name given scope = Param.{given; scope}
 
 let ident id = 
-    let resolved, resolution = 
-        Span.(id.value)
-        |> String.split ~on: '.' 
-        |> List.map ~f: (fun value -> Symbol.Resolved.make value None)
-        |> Util.Lists.last_rest in Ident.{
-            typ = Type.Unknown;
-            range = id.range;
-            resolved;
-            resolution;
-        }
+    let range = Span.(id.range) in
+    Ident.{
+        typ = Type.Unknown;
+        range = range;
+        qual = Qualified.from_string Span.(id.value);
+    }
 
 let param ~expr p = 
     let rec shape = function
@@ -73,28 +68,38 @@ let param ~expr p =
     match p with
     | AstNode.Param.Positional p -> TyNode.Param.{
         value = Positional {pattern = shape p.shape};
-        typ = Option.map ~f:typ p.typ 
-            |> Option.value ~default: Type.Unknown 
+        type_ident = Option.map ~f:type_ident p.type_ident;
+        typ = Type.Unknown;
     }
     | AstNode.Param.Named p -> TyNode.Param.{
         value = Named {name = name p.name.value p.name.value};
-        typ = Option.map ~f:typ p.typ 
-            |> Option.value ~default: Type.Unknown 
+        type_ident = Option.map ~f:type_ident p.type_ident;
+        typ = Type.Unknown;
     }
     | AstNode.Param.Optional p -> TyNode.Param.{
         value = Optional {
             name = name p.name.value p.name.value;
             default = Option.map ~f:expr p.expr
         };
-        typ = Option.map ~f:typ p.typ 
-            |> Option.value ~default: Type.Unknown;
+        type_ident = Option.map ~f:type_ident p.type_ident;
+        typ = Type.Unknown;
     }
     | AstNode.Param.Extension p -> TyNode.Param.{
         value = Extension {name = name p.name.value p.name.value};
-        typ = typ p.typ
+        type_ident = Some (type_ident p.type_ident);
+        typ = Type.Unknown;
     }
 
 let params ~expr = List.map ~f:(param ~expr)
+
+let typedef td =
+    TyNode.Typedef.{
+        name = AstNode.Typedef.(td.name);
+        scope_name = "";
+        params = List.map td.params ~f: (fun param -> {var = param.var});
+        def = match td.def with
+            | Foreign _ -> Foreign
+    }
 
 let rec apply apply = 
     let fn = expr AstNode.Apply.(apply.fn) in
@@ -114,9 +119,9 @@ and arg = function
 and value = function
     | Ast.Node.Value.Foreign f -> Expr.Foreign Foreign.{
         typ = Type.Unknown;
-        range = f.range;
-        name = f.value;
-        scheme = None
+        type_ident = type_ident f.typ;
+        range = f.name.range;
+        name = f.name.value;
     }
     | Ast.Node.Value.Unit u -> Expr.Value Value.{typ = Base_types.unit; range = u.range; value = ""}
     | Ast.Node.Value.Int int -> Expr.Value Value.{typ = Base_types.int; range = int.range; value = int.value}
@@ -227,15 +232,17 @@ and binding n =
         is_rec = n.is_rec;
         scheme = None;
         (* use sigt everywhere *)
-        sigt = Option.map ~f:(typ) n.sig';
+        sigt = None; (* TODO: remove *)
+        (* sigt = Option.map ~f:(typ) n.sig'; *)
         params = params;
         result = Type.Unknown
     }
 
 and modu_entries = List.map ~f: (function
+    | AstNode.Module.Typedef td -> Module.Typedef (typedef td)
     | AstNode.Module.Module m -> Module.Module (modu m)
     | AstNode.Module.Let t -> Module.Binding (binding t)
-    | AstNode.Module.Import i -> Module.Import (import i)
+    | AstNode.Module.Using u -> Module.Using (using u)
 )
 
 and modu m = 

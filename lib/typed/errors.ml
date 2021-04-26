@@ -12,6 +12,8 @@ type t =
 } | NotFunction of {
     range: Span.range;
     type_provided: Type.t
+} | NotModule of {
+    name: string Span.t
 } | IgnoredResult of {
     range: Span.range;
     unexpected: Type.t;
@@ -65,6 +67,8 @@ let clear_range = function
     IgnoredResult {unexpected; range = Span.empty_range}
 | NotFunction {type_provided=tp; _} -> 
     NotFunction {type_provided=tp; range = Span.empty_range}
+| NotModule {name} -> 
+    NotModule {name = Span.empty name.value}
 | IfTypeMismatch {unexpected=u; _} -> 
     IfTypeMismatch {unexpected=u; range = Span.empty_range}
 | BranchTypeMismatch {unexpected=u; expected=e; _} -> 
@@ -99,6 +103,8 @@ let to_string = function
     concat ["Ignored result:"; Span.range_str range; Type.to_string unexpected]
 | NotFunction {type_provided=tp; range} -> 
     concat ["Not a Function:"; Span.range_str range; Type.to_string tp]
+| NotModule {name} -> 
+    concat ["Not a Module:"; Span.range_str name.range; name.value]
 | IfTypeMismatch {unexpected=u; range} -> 
     concat ["If Type Mismtach:"; Span.range_str range; Type.to_string u]
 | BranchTypeMismatch {unexpected=u; expected=e; range} -> 

@@ -28,9 +28,9 @@ let rec apply substs = function
 | Type.Lambda (PosParam from, to') -> 
     Type.Lambda (PosParam (apply substs from), apply substs to')
 | Type.Lambda (NamedBlock b, to') -> 
-    Type.Lambda (NamedBlock (List.map b ~f: (fun p -> Type.{ p with named_typ = apply substs p.named_typ})), apply substs to')
+    Type.Lambda (NamedBlock (List.map b ~f: (fun p -> Type.{ p with param_typ = apply substs p.param_typ})), apply substs to')
 | Type.Lambda (NamedParam p, to') -> 
-    Type.Lambda (NamedParam ({p with named_typ = apply substs p.named_typ}), apply substs to')
+    Type.Lambda (NamedParam ({p with param_typ = apply substs p.param_typ}), apply substs to')
 | Type.Tuple t -> Type.Tuple (List.map t ~f:(apply substs))
 | Type.Unknown -> Type.Unknown
 | Type.Unit -> Type.Unit
@@ -70,7 +70,7 @@ let rec apply_substs_to_params substs =
             }
             | v -> v
         ) in
-        Param.{typ; value}
+        Param.{p with typ; value}
     )
 
 and apply_arg substs = function
@@ -185,3 +185,4 @@ let apply_to_error substs err =
     | UnusedMatchCase t -> UnusedMatchCase t
     | CannotApplyWithLabel t -> CannotApplyWithLabel{t with lambda = apply substs t.lambda}
     | CannotApplyWithoutLabel t -> CannotApplyWithoutLabel {t with lambda = apply substs t.lambda}
+    | NotModule t -> NotModule t

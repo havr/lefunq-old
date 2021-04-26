@@ -9,12 +9,9 @@ module Coverage_test = struct
         | h :: t ->
             let open Typed.Infer_match.Coverage in
             let h' = invert h in
-            Common.log ["CASE"; to_string h; "=>"; list_to_string h'];
             List.fold t ~init:h' ~f:(fun unc c ->
                 let c' = invert c in
-                Common.log ["CASE"; to_string c; "=>"; list_to_string c'];
                 let unc' = merge unc c' in
-                Common.log ["UNC"; list_to_string unc'];
                 unc'
             )
 

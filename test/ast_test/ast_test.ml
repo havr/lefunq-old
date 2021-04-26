@@ -381,5 +381,6 @@ let tests = [
     ("ast:module", Ast_test__module.tests);
     ("ast:match", Ast_test__match.tests);
     ("ast:named_params", Ast_test__named_params.tests);
-    ("ast:list", Li.tests)
+    ("ast:list", Li.tests);
+    ("ast:typedef", Ast_test__typedef.tests);
   ]

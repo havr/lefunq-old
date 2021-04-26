@@ -1,5 +1,7 @@
 open Base
 open Common
+open Typed_common
+
 module Scope = struct 
     let namer prefix = 
         let sh = ref (Map.empty(module String)) in
@@ -64,7 +66,7 @@ module Scope = struct
 
     let make_id scope name =
         let scope_name = scope.namer name in
-        Symbol.Id.{
+        Id.{
             source = scope.source;
             modules = scope.modules;
             name = scope_name;
@@ -124,8 +126,20 @@ module Scope = struct
         });
         id
 
+    let add_typedef scope name params def =
+        let id = make_id scope name in
+        (* TODO: what when I re-expose stuff? *)
+        set_resolution scope name (fun res -> { res with
+            typedef = Some Symbol.Typedef.{
+                id;
+                params;
+                def
+            }
+        });
+        id
+
     let implant_binding scope exposed scheme =
-        let id = Symbol.Id.make "" [] exposed in
+        let id = Id.make "" [] exposed in
         set_resolution scope exposed (fun res -> { res with
             binding = Some Symbol.Binding.{
                 id;
@@ -143,162 +157,51 @@ module Scope = struct
         })
         
 
-    let lookup_exposed names exposed = 
-        let rec lookup_exposed' result names = function
+    let lookup_exposed exposed path = 
+        let rec lookup_exposed' exposed = function
             | [] -> raise (Invalid_argument "no path is provided")
             | name :: [] -> 
-                Symbol.Resolved.(name.given) 
-                |> Map.find names 
-                |> Option.map ~f:(fun m -> m, List.rev result)
+                Map.find exposed name
+                |> Option.map ~f:(fun m -> 
+                    m, Typed_common.Qualified.{
+                        name = Resolved.make name None; (* found entity contains multiple namespaces: caller must pick which one was actually looked for*)
+                        path = [];
+                    }
+                )
             | name :: rest -> (
-                match Map.find names name.given with
-                | None -> None
-                | Some exposed -> (match Symbol.Module.(exposed.modu) with
-                    | None -> None
-                    | Some modu -> 
-                        let resolved = (Symbol.Resolved.make name.given (Some modu.id)) in
-                        lookup_exposed' (resolved :: result) Symbol.Module.(modu.exposed) rest
+                Map.find exposed name
+                |> Util.Option.flat_map (fun Symbol.Module.{modu; _} -> modu)
+                |> Util.Option.flat_map (fun modu ->
+                    lookup_exposed' Symbol.Module.(modu.exposed) rest
+                    |> Option.map ~f:(fun (sym, qual) -> 
+                        sym, Qualified.{qual with path = (Resolved.make name (Some(modu.id))) :: qual.path}
+                    ) 
                 )
             )
-        in lookup_exposed' [] names exposed
+        in lookup_exposed' exposed path
 
     let mprint m = Map.iteri m ~f: (fun ~key ~data -> match Symbol.Module.(data.binding) with 
         | None -> ()
         | Some m -> Common.log [key; "="; m.id.name]
     )
 
-    let rec lookup scope path = 
-        match path with
-        | [] -> raise (Invalid_argument "expected qualified name, got empty one")
-        | name :: rest ->
-            match Map.find scope.names Symbol.Resolved.(name.given) with
-            | Some exposed ->
-                (match rest with
-                    | [] -> Some (exposed, [])
-                    | rest -> (match exposed.modu with 
-                        | Some m -> lookup_exposed m.exposed rest 
-                            |> Option.map ~f: (fun (value, path) -> (value, (Symbol.Resolved.make name.given (Some m.id)) :: path))
-                        | None -> None
-                    )
-                )
-            | None -> 
-                match scope.parent with 
-                | Some ps -> (lookup ps) path
-                | None -> None
+    let lookup scope qual = 
+        let rec lookup' scope = function
+            | [] -> raise (Invalid_argument "expected qualified name, got empty one")
+            | name :: rest ->
+                match Map.find scope.names name with
+                | Some exposed ->
+                    (match rest with
+                        | [] -> Some (exposed, Qualified.make (Resolved.make name None) [])
+                        | rest -> exposed.modu 
+                            |> Util.Option.flat_map (fun m ->
+                                lookup_exposed Symbol.Module.(m.exposed) rest
+                                |> Option.map ~f: (fun (sym, path) -> 
+                                     (sym, Typed_common.Qualified.append (Resolved.make name (Some m.id)) path))))
+                | None -> 
+                    match scope.parent with 
+                    | Some ps -> lookup' ps (name :: rest)
+                    | None -> None
+        in 
+        lookup' scope (Qualified.given_names qual)
 end
-(* 
-module Global = struct
-    type t = {
-        parent: t option;
-        scope: Scope.t;
-        modname: string;
-    }
-
-    let root () = {
-        parent = None;
-        modname = "";
-        scope = Scope.make ();
-    }
-
-(*todo: toplevel tests *)
-(*todo: connect typed to the pipeline (errors) *)
-(*todo: let recs to compile existing code *)
-    let import resolver name value = 
-        Scope.import resolver.scope name value
-
-
-    let add_own resolver name value = 
-        let scope_idx = Map.find resolver.shadowing name 
-            |> Option.value ~default:1
-        in
-        let global_prefix = match resolver.modname with
-        | "" -> ""
-        | modname -> modname ^ "."  ^ name
-        in
-        let global_suffix = match scope_idx with
-        | 1 -> ""
-        | n -> "$" ^ (Int.to_string n)
-        in
-        let global_name = global_prefix ^ name ^ global_suffix in
-        (* TODO: generalize as a function *)
-        resolver.scope <- Map.set resolver.scope ~key: name ~data: value;       (* TODO: make ordered map orsomething *)
-        resolver.shadowing <- Map.set resolver.shadowing ~key: name ~data: (scope_idx + 1);
-        global_name
-
-
-    let rec lookup resolver name = 
-        match String.split ~on: '.' name with
-        | [] -> raise (Invalid_argument "expected qualified name, got empty one")
-        | head :: rest ->
-            match Map.find resolver.scope head with
-            | Some r -> lookup_resol r rest
-            | None -> match resolver.parent with
-                | Some p -> lookup p name
-                | None -> None
-end
-
-module Local = struct 
-    type t = {
-        scope: Scope.t;
-        namer: string -> string
-    }
-
-    let make _ = {
-        scope = Scope.make ();
-        namer = Namer.namer "";
-    }
-
-    let add_local_binding res name scheme = 
-        let name = res.namer name in
-        let binding = Scope.add_local_binding 
-        Scope.add_local_binding res.scope
-        let scope_idx = Map.find res.shadowing name 
-            |> Option.value ~default:1
-        in
-        let scope_suffix = match scope_idx with
-        | 1 -> ""
-        | n -> "$" ^ (Int.to_string n)
-        in
-
-        let scope_preffix = match res.scope_path with
-        | "" -> ""
-        | scope -> scope ^ "."
-        in
-
-        let scope_name = scope_preffix ^ name ^ scope_suffix in
-        res.shadowing <- Map.set res.shadowing ~key: name ~data: (scope_idx + 1);
-        res.scope <- Map.set res.scope ~key: name ~data: (`Local (Binding {
-            scope_name;
-            scheme = scheme
-        }));
-        scope_name
-
-    let sub ~name parent = {
-        parent = `Local parent;
-        scope_path = parent.scope_path ^ "." ^ name;
-        scope = Map.empty(module String);
-        shadowing = Map.empty(module String)
-    }
-
-    let rec lookup resolver name = 
-        match Map.find resolver.scope name with
-        | Some result -> Some result
-        | None ->
-            match resolver.parent with
-            | `Local parent -> lookup parent name
-            | `Global glob -> begin match Global.lookup glob name with 
-                | Some result -> Some (`Global result)
-                | None -> None
-            end
-            | `None -> None
-
-    let rec lookup resolver name = 
-        match String.split ~on: '.' name with
-        | [] -> raise (Invalid_argument "expected qualified name, got empty one")
-        | head :: rest ->
-            match Map.find resolver.scope head with
-            | Some r -> lookup_resol r rest
-            | None -> match resolver.parent with
-                | Some p -> lookup p name
-                | None -> None
-end *)

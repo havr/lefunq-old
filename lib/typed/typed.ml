@@ -12,6 +12,7 @@ module Type = Type
 module Node = Node
 module Type_util = Type_util
 module Inferno = Inferno
+module Typed_common = Typed_common
 
 let map_fst fn tuple = 
     let (fst, snd) = tuple in (fn fst, snd)
@@ -45,14 +46,13 @@ module MyApply = struct
             in
             (match (label, from) with
             | "", PosParam p -> Some (p, to')
-            | "", NamedParam p ->
-                Common.log["=="; p.name; label];
+            | "", NamedParam _ ->
                 next()
             | _, PosParam _  -> 
                 next()
             | label, NamedParam p -> 
-                if (String.equal p.name label) 
-                then (Some (p.named_typ, to')) 
+                if (String.equal p.param_name label) 
+                then (Some (p.param_typ, to')) 
                 else next()
             | _, NamedBlock _ -> (raise Common.TODO) )
         | _ -> None
@@ -131,13 +131,6 @@ module Infer = struct
 
         let intern_stmt ~ctx = function
             | Stmt.Expr e -> ignore @@ expr ~ctx e
-                (* TODO *)
-                (* begin match Type.equals typ Base_types.unit with
-                | true -> ()
-                | false -> 
-                    Common.log ["<><><>\n\n"; Type.to_string typ; Type.to_string Base_types.unit];
-                    Basket.put ctx.errors @@ IgnoredResult {unexpected = typ}
-                end; *)
             | Stmt.Let _let -> ignore @@ binding ~ctx _let
             | _ -> raise Common.TODO
         in
@@ -154,7 +147,7 @@ module Infer = struct
 
     and block ~ctx block = block_stmts ~ctx Block.(block.stmts)
 
-    and infer_default_params ~ctx params = List.map params ~f: (fun Param.{typ; value} -> match value with
+    and infer_default_params ~ctx params = List.map params ~f: (fun Param.{typ; value; _} -> match value with
         | Param.Optional {default = e; _} -> Option.map e ~f: (fun e ->
             let default_typ = expr ~ctx e in
             (* TODO: check unification order *)
@@ -234,7 +227,7 @@ module Infer = struct
                     let result = ctx.tempvar() in
                     let src = (match label with
                         | "" -> Type.PosParam (from_typ)
-                        | label -> Type.NamedParam {is_optional = false; name = label; named_typ = from_typ}
+                        | label -> Type.NamedParam {is_optional = false; param_name = label; param_typ = from_typ}
                     ) in
                     add_subst ~ctx v (Type.Lambda (src, result));
                     (from_typ, result)
@@ -290,7 +283,7 @@ module Infer = struct
         in 
         let lam = mk @@ List.map Node.Apply.(m.args) ~f: (function 
             | PosArg {expr = e} -> Type.PosParam (expr ~ctx e)
-            | NameArg {name; expr = e} -> Type.NamedParam {is_optional = false; name = name.value; named_typ = expr ~ctx e}
+            | NameArg {name; expr = e} -> Type.NamedParam {is_optional = false; param_name = name.value; param_typ = expr ~ctx e}
         ) in
         add_subst ~ctx v lam;
         result
@@ -380,7 +373,6 @@ module Infer = struct
                 first_t
             ) in Base_types.list (first_t)
 
-    and foreign ~ctx _ = ctx.tempvar()
     and expr ~ctx = function
         | Expr.Value m -> m.typ
         | Expr.Ident m -> Ident.(m.typ)
@@ -388,7 +380,7 @@ module Infer = struct
         | Expr.Tuple t -> tuple_expr ~ctx t
         | Expr.Apply m -> apply_expr ~ctx m
         | Expr.Cond c -> cond ~ctx c
-        | Expr.Foreign f -> foreign ~ctx f
+        | Expr.Foreign f -> Foreign.(f.typ)
         | Expr.Match m -> matc ~ctx m
         | Expr.Li l -> list ~ctx l
     and matc ~ctx m = Infer_match.matc ~ctx ~expr ~block_stmts m
@@ -449,17 +441,19 @@ module Global = struct
         (typed_node, errors)
     
     let expose modu_id entries = 
-        let make_id scope_name = Symbol.Id.make Symbol.Id.(modu_id.source) (modu_id.modules @ [modu_id.name]) scope_name in
+        let make_id scope_name = Typed_common.Id.make Typed_common.Id.(modu_id.source) (modu_id.modules @ [modu_id.name]) scope_name in
         entries
         |> List.filter ~f: (function 
+            | Module.Typedef m -> not @@ String.is_prefix ~prefix:"_" m.name.value
             | Module.Module m -> not @@ String.is_prefix ~prefix:"_" m.given_name
             | Module.Binding b -> not @@ String.is_prefix ~prefix:"_" b.given_name
-            | Module.Import _ -> false
+            | Module.Using _ -> false
         )
         |> List.fold ~init: (Symbol.Module.empty modu_id) ~f: (fun sym node -> 
             let given_name = (match node with 
                     | Module.Module m -> m.given_name
                     | Module.Binding b -> b.given_name
+                    | Module.Typedef t -> t.name.value
                     | _ -> raise Common.Unreachable) in 
             { sym with exposed = Map.update sym.exposed given_name
                 ~f: (fun exposed -> 
@@ -469,15 +463,29 @@ module Global = struct
                         { exposed with modu = Some (Symbol.Module.make (make_id m.scope_name) m.exposed) } 
                     | Module.Binding b -> 
                         { exposed with binding = Some (Symbol.Binding.make (make_id b.scope_name) (Option.value ~default: Type.unknown_scheme b.scheme)) } 
+                    | Module.Typedef t ->
+                        let params = List.map t.params ~f: (fun param -> Symbol.Typedef.{var = param.var.value}) in
+                        let typedef = Symbol.Typedef.make (make_id t.scope_name) params t.def in
+                        { exposed with typedef = Some typedef } 
                     | _ -> raise Common.Unreachable))
             } 
         ) 
+
+    let typedef resolver td =
+        let params = List.map Typedef.(td.params) ~f: (fun {var} -> Symbol.Typedef.{var = var.value}) in
+        let scope_name = Resolver.Scope.add_typedef resolver td.name.value params td.def in
+        Ok scope_name
 
     let rec modu ~resolve_source resolver id m = 
         (* TODO: Symbol.Module / Typedef.Module / Def.Module *)
         (* TODO: Symbol.Id / some global id *)
         (* s/typedefs/typs in Symbol.t: typedef is type definition *)
         match try_map Node.Module.(m.entries) ~f: (function
+            | Node.Module.Typedef td -> 
+                (match typedef resolver td with 
+                    | Ok id -> Ok (Module.Typedef {td with scope_name = id.name})
+                    | Error e -> Error e
+                )
             | Node.Module.Module m -> 
                 let id = Resolver.Scope.make_id resolver m.given_name in
                 let m = {m with scope_name = id.name} in
@@ -497,10 +505,10 @@ module Global = struct
                 (match errs with 
                     | [] -> Ok (Module.Binding typ)
                     | _ -> Error errs)
-            | Node.Module.Import im -> 
-                let (import, errs) = Resolve.import resolve_source resolver im in
+            | Node.Module.Using im -> 
+                let (import, errs) = Resolve.using resolve_source resolver im in
                 (match errs with
-                | [] -> Ok (Module.Import import)
+                | [] -> Ok (Module.Using import)
                 | errs -> Error errs)
         ) with
             | Error errors -> Error errors
@@ -532,8 +540,4 @@ let root ~source ~resolve_source m =
         ignore @@ Resolver.Scope.implant_binding resolver name scheme);
     (* TODO: pass name *)
     let tf = Transform.root m in 
-    let m = Global.modu ~resolve_source resolver (Symbol.Id.make source [] "") Node.Module.{scope_name = ""; given_name = ""; exposed = Map.empty(module String); entries = tf.entries} in
-    (match m with
-    | Ok m -> Common.log["~~~"; Pp.to_string [m |> Node.Print_node.modu]];
-    | Error _ -> ());
-    m
+    Global.modu ~resolve_source resolver (Typed_common.Id.make source [] "") Node.Module.{scope_name = ""; given_name = ""; exposed = Map.empty(module String); entries = tf.entries}

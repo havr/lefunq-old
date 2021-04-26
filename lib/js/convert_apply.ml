@@ -20,7 +20,7 @@ module Shape = struct
         | Type.Lambda (param, to') ->
             let arg = (match param with
                 | Type.PosParam _ -> ("", false, `None)
-                | Type.NamedParam p -> (p.name, p.is_optional, `None) 
+                | Type.NamedParam p -> (p.param_name, p.is_optional, `None) 
                 | Type.NamedBlock _ -> (raise Common.TODO) (* Unroll this syntactic sugar before *)
             ) in from_arg (arg :: result) to'
         | _ -> List.rev result
@@ -217,9 +217,8 @@ let convert  ~expr app accessor =
         ) in
         consts, rewrapped
     in
-    Common.log ["converting apply"; Type.to_string Typed.Node.(Expr.typ Apply.(app.fn))];
     let (instant, rewr) = apply app in
-    Option.iter instant ~f:(fun chs -> List.iter chs ~f: (fun sh -> print_shape Instant.(sh.actions)));
+    (* Option.iter instant ~f:(fun chs -> List.iter chs ~f: (fun sh -> print_shape Instant.(sh.actions))); *)
     let tempvar = make_tempvar "" in
     let arg_vars =
         let from_chunks = Option.value ~default: [] @@ Option.map instant ~f: (fun chunks ->

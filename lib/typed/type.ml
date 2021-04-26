@@ -2,19 +2,33 @@ open Common
 open Base
 
 type named_param = 
-    {is_optional: bool; name: string; named_typ: t}
+    {is_optional: bool; param_name: string; param_typ: t}
+
+and name = {
+    (* TODO: resolved/qualified *)
+    resolved: Typed_common.Qualified.t;
+    def: def
+}
+
+and def = 
+    Foreign
+    | Unresolved 
 
 and param = 
     | PosParam of t
     | NamedParam of named_param
     | NamedBlock of named_param list
 and t = Var of string 
-    | Simple of (string * t list)
+    (* TODO: App for type application *)
+    (* TODO: Cons or smth instead of Simple *)
+    | Simple of (name * t list)
     | Lambda of (param * t)
     | Tuple of (t list)
     | Unit
     | Unknown
     | Invalid
+
+let make_name resolved def = {resolved; def}
 
 type constr = (string)
 
@@ -22,7 +36,6 @@ type scheme = {
     constr: constr list;
     typ: t;
 }
-
 
 let make_scheme constr typ = {constr; typ}
 
@@ -42,13 +55,16 @@ let rec to_string = function
 | Unknown -> "<unknown>"
 | Var v -> v
 | Simple (v, params) -> 
+    let name_str n = 
+        (Typed_common.Qualified.given n.resolved) 
+    in
     let str_params = (match params with 
     | [] -> "" 
     | params -> params 
         |> List.map ~f: to_string 
         |> String.concat ~sep: " "
         |> (^) " "
-    ) in v ^ str_params
+    ) in (name_str v) ^ str_params
 | Tuple vs ->
     let concat = List.map vs ~f:to_string 
     |> String.concat ~sep: ", " in
@@ -58,8 +74,8 @@ let rec to_string = function
         | Lambda lam -> "(" ^ (to_string (Lambda lam)) ^ ")"
         | p -> to_string p
     in
-    let named_param {is_optional; name; named_typ} = 
-        (if is_optional then name ^ "?" else name) ^ ":" ^ (pos named_typ)
+    let named_param {is_optional; param_name; param_typ} = 
+        (if is_optional then param_name ^ "?" else param_name) ^ ":" ^ (pos param_typ)
     in
     let param = function
         | PosParam p -> pos p
@@ -83,7 +99,7 @@ let scheme_to_string scheme =
 let rec equals a b = match (a, b) with
 | (Var av, Var bv) -> String.equal av bv
 | (Simple (av, ap), Simple (bv, bp)) -> 
-    String.equal av bv && (List.length ap = List.length bp) && (
+    (phys_equal av bv) && (List.length ap = List.length bp) && (
         List.zip_exn ap bp 
         |> List.find ~f: (fun (a, b) -> not @@ equals a b) 
         |> Option.is_some 
@@ -104,21 +120,24 @@ let rec equals a b = match (a, b) with
 | Invalid, Invalid -> true
 | _, _ -> false
 
+(* TODO: free_vars -> variables *)
 let rec free_vars = function
 | Invalid -> Set.empty (module String)
 | Unit -> Set.empty (module String)
 | Unknown -> Set.empty (module String)
-| Simple _  -> Set.empty (module String)
+| Simple (_, args)  -> 
+    List.map args ~f: free_vars
+    |> List.fold ~init: (Set.empty(module String)) ~f: (Set.union) 
 (* TODO: more convenient *)
 | Var v -> Set.singleton (module String)  v
 | Tuple t -> List.fold t ~init: (Set.empty (module String)) ~f: 
     (fun result typ -> Set.union result (free_vars typ))
 | Lambda ((PosParam a), b) -> Set.union (free_vars a) (free_vars b)
 | Lambda ((NamedParam p), b) -> 
-    free_vars p.named_typ
+    free_vars p.param_typ
     |> Set.union (free_vars b)
 | Lambda ((NamedBlock a), b) -> 
-    List.map a ~f: (fun p -> free_vars p.named_typ)
+    List.map a ~f: (fun p -> free_vars p.param_typ)
     |> List.fold ~init: (Set.empty(module String)) ~f: (Set.union)
     |> Set.union (free_vars b)
 

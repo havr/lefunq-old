@@ -38,8 +38,7 @@ let local_ident_stmt ?scope_name ?typ name =
     let ident = Ident.{
         typ = Option.value ~default: Type.Unknown typ;
         range = Common.Span.empty_range;
-        resolved = Symbol.Resolved.make name @@ Some (Typed.Symbol.Id.make "" [] @@ Option.value ~default:name scope_name);
-        resolution = [];
+        qual = Typed_common.Qualified.just_name name @@ Some (Typed.Typed_common.Id.make "" [] @@ Option.value ~default:name scope_name);
     } in Stmt.Expr (Expr.Ident ident)
 
 let lambda_stmt params stmts = 
@@ -51,6 +50,7 @@ let lambda_stmt params stmts =
               value = Typed.Param.(
                 Positional {pattern = Name {given = n; scope = n}}
               );
+              type_ident = None;
               typ
             }
         );
@@ -68,4 +68,4 @@ let difference ~equals src check =
     | None -> x :: a
   )
 
-let simple name = Typed.Type.Simple (name, [])
+let simple name = Typed.Type.Simple (Typed.Type.make_name (Typed.Typed_common.Qualified.just_name name None) Type.Foreign, [])

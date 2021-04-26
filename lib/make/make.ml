@@ -114,12 +114,11 @@ module Frontend = struct
         else 
             (* TODO: resolve package name *)
             resolve_path(cwd ^ "/" ^ source)
-        (* raise (Invalid_argument source) *)
 
     let ensure_extension str = 
-        if String.is_suffix ~suffix: ".le" str 
+        if String.is_suffix ~suffix: ".lf" str 
         then str
-        else str ^ ".le"
+        else str ^ ".lf"
 
     let resolve_source_file ~ctx import_stack source =
         let cwd = match import_stack with
@@ -165,6 +164,13 @@ module Frontend = struct
             file;
             range;
             msg = "Is not a function: " ^ (Typed.Type.to_string type_provided);
+            context = None
+        }
+    | Typed.Errors.NotModule {name} ->
+        Common.Err.{
+            file;
+            range = name.range;
+            msg = "Is not a module: " ^ (name.value);
             context = None
         }
     | Typed.Errors.IgnoredResult { unexpected; range } ->
@@ -283,11 +289,6 @@ module Frontend = struct
                             | Error `SourceErrors -> Error Typed.Resolve.SourceError
                             | Error _ -> Error Typed.Resolve.SourceNotFound
                             | Ok resolved -> Ok (file_name, Typed.Symbol.Module.(resolved.exposed))
-                                (* let scope = Typed.Symbol.Module.{ 
-                                    modu = Some resolved; 
-                                    binding = None;
-                                    typedef = None 
-                                } in Ok (file_name, scope) *)
         and compile import_stack file_name = 
                 match ctx.config.fs.read file_name with
                 | None -> Error `ReadError
@@ -302,7 +303,7 @@ module Frontend = struct
                             ctx.errors <- (List.map errors ~f: (convert_typed_error file_name)) @ ctx.errors;
                             Error `SourceErrors
                         | Ok modu ->
-                            let source_module = Typed.Symbol.Module.{id = Typed.Symbol.Id.make file_name [] ""; exposed = modu.exposed} in
+                            let source_module = Typed.Symbol.Module.{id = Typed.Typed_common.Id.make file_name [] ""; exposed = modu.exposed} in
                             ctx.sources <- Map.add_exn ctx.sources ~key: file_name ~data: source_module;
                             ctx.callback {source=file_name; root = modu};
                             Ok source_module
@@ -324,47 +325,6 @@ module Frontend = struct
         | Error `SourceErrors -> Error (SourceErrors (List.rev ctx.errors))
         | Ok _ -> Ok ()
 end
-
-(* let resolve_file ~ctx prev_imports source =
-    match resolve prev_imports source with
-    | Ok path -> bundle ~ctx file
-    | Error e -> e
-
-and bundle ~ctx file_name =
-    match Fs.(ctx.fs.exists) file_name with
-    | false -> Result.error (SourceNotFound {name}) (* file doesn't exist *)
-    | true -> Result.ok "foo" 
-
-
-let frontend ~fs entrypoint = (
-    let str = Option.value_exn (Fs.(fs.read) src_file) in
-    (* let str_lines = String.split ~on:'\n' str in *)
-    match Ast.of_string ~file:src_file str with
-    | Ok root -> 
-        let (typed, errors) = Typed.root root in begin
-            match errors with 
-            | [] -> Ok typed
-            | errors -> 
-                errors 
-                |> List.map ~f:(fun e -> 
-                    (*let line = Typed.Resolve.(e.pos).row in
-                    let context_start = if line < 1 then 0 else line - 1 in
-                    let length = line - context_start in
-                    let context = Err.{
-                        lines = List.sub ~pos: context_start ~len: length str_lines;
-                        start_line = context_start
-                    } in*) Err.{ context = None; file = src_file; pos = Common.Pos.empty;
-                        msg = Typed.Error.to_string e})
-                |> (fun e -> Error e)
-        end
-    (* Ok (List.map Typed.Transform.block_stmt block_stmts) *)
-    | Error e -> Error [e]
-)  *)
-
-(* let js_backend ~fs typed out_file =
-    let js_ast = Js.Convert.root_module typed in
-    let printer = Js.Ast.Printer.make ~ident: 4 () in
-    Js.Ast.Printer.str "const println = (a) => console.log(a);\n" printer; *)
 
 module JsBackend = struct 
     module Bundler = struct 
@@ -444,9 +404,9 @@ module JsBackend = struct
                     (* TODO: check it earlier? *)
                     add_dep ~name: (Js.Convert.foreign_require) (Option.value_exn foreign_bindings)
                 | Ident id -> 
-                    (match (id.resolution @ [id.resolved]) with
+                    (match (id.qual.path @ [id.qual.name]) with
                         | [] -> raise (Common.Unreachable)
-                        | res :: _ -> add_dep (Option.value_exn res.absolute).source
+                        | res :: _ -> add_dep (Option.value_exn res.resolved).source
                     )
                 | Apply app -> 
                     expr app.fn;
@@ -469,9 +429,11 @@ module JsBackend = struct
             let rec modu m = 
                 List.iter Module.(m.entries) ~f:(function
                 | Module.Binding b -> block b.block
-                | Module.Import im -> 
-                    add_dep im.resolved_source
+                | Module.Using im -> (match im.root with 
+                    | Using.Source {resolved; _} -> add_dep resolved; 
+                    | _ -> ());
                 | Module.Module m -> modu m
+                | Module.Typedef _ -> (raise Common.TODO)
             ) 
             in modu root; !order
         in 
@@ -536,7 +498,6 @@ let make ~fs in_ out =
         in
         (* strip path / filename without ext *)
         (* does $filename.js file exist. if so, read it and attach *)
-        Common.log[Pp.to_string [Typed.Node.Print_node.modu root]];
         JsBackend.write_source ~bindings backend source root 
     ) in_ with
     | Ok _ ->

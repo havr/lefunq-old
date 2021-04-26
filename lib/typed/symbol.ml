@@ -1,5 +1,6 @@
 open Common
 open Base
+open Typed_common
 
 (* let foo = {|"${1}".${2}|} %% [id.source; id.name]
 
@@ -11,7 +12,8 @@ let (%%) str args =
             ("", None)
         else if String.prefix ~prefix: "\$" str then *)
 
-module Id = struct 
+(* TODO: moved to Typed_common *)
+(* module Id = struct 
     type t = {
         source: string;
         modules: string list;
@@ -58,7 +60,7 @@ module Resolved = struct
             |> Option.is_none
         | false -> false
     )
-end
+end *)
         
 
 module Binding = struct
@@ -70,15 +72,23 @@ module Binding = struct
     let make id scheme = {id; scheme}
 end
 
-module TypeDef = struct 
-    type t = unit
+module Typedef = struct 
+    type param = {var: string}
+
+    type t = {
+        id: Id.t;
+        params: param list;
+        def: Type.def
+    }
+
+    let make id params def = {id; params; def}
 end
 
 module Module = struct
     type exposed = {
         binding: Binding.t option;
         modu: t option;
-        typedef: TypeDef.t option
+        typedef: Typedef.t option
     }
 
     and t = {

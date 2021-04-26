@@ -116,6 +116,11 @@ module Util = struct
             ~init:(Set.empty(module String))
             ~f: (fun set v -> Set.add set v)
     end
+    module Option = struct 
+        let flat_map fn = function
+            | Some v -> fn v 
+            | None -> None
+    end
     module Strings = struct 
         let surround start fin str = start ^ str ^ fin
     end

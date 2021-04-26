@@ -142,7 +142,7 @@ let find_ident name stmts =
 
     and find_in_expr = function
         | Value _ -> None 
-        | Ident t when String.equal t.resolved.given name -> Some (t.typ)
+        | Ident t when String.equal t.qual.name.given name -> Some (t.typ)
         | Ident _ -> None
         | Apply a -> (match find_in_expr a.fn with
             | Some m -> Some m

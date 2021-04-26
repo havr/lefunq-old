@@ -245,6 +245,28 @@ module Parser(Lexeme: LEXEME) = struct
         }
     }
 
+    let validate fn parser = { fn = fun state ->
+        match parser.fn state with
+            | Error e -> Error e
+            | Ok (result, state') -> (match fn result with
+                | `Ok v -> Ok (v, state')
+                | `NoMatch msg -> 
+                    Error {
+                        err_msg = msg;
+                        err_pos = State.curr_pos state;
+                        caused_by = (State.curr state).value;
+                        no_match = true;
+                    }
+                | `SyntaxErr msg ->
+                    Error {
+                        err_msg = msg;
+                        err_pos = State.curr_pos state;
+                        no_match = false;
+                        caused_by = (State.curr state).value
+                    }
+            )
+    }
+
     let bind parser f = { fn = fun state ->
         let result = parser.fn state in
             match result with

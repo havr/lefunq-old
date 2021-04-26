@@ -132,6 +132,10 @@ let test_rec_complex_error () =
         "a", Type.lambda ~constr:["t0"] [Type.Var "t0"; Type.Var "t0"];
     ]  *)
 
+open Typed.Typed_common
+
+let foreign_name name = Type.make_name (Qualified.just_name name None) Type.Foreign
+
 let test_empty_list () =
     test
     ~expect_errors: []
@@ -139,7 +143,7 @@ let test_empty_list () =
         let a = []
     |}
     ~expect: [
-        "a", Type.make_scheme [] (Typed.Type.Simple ("List", [Typed.Type.Var "t0"]));
+        "a", Type.make_scheme [] (Typed.Type.Simple (foreign_name "List", [Typed.Type.Var "t0"]));
     ] 
 
 let test_single_item_list () =
@@ -149,7 +153,7 @@ let test_single_item_list () =
         let a = ["1"]
     |}
     ~expect: [
-        "a", Type.make_scheme [] (Typed.Type.Simple ("List", [Typed.Base_types.str]));
+        "a", Type.make_scheme [] (Typed.Type.Simple (foreign_name "List", [Typed.Base_types.str]));
     ] 
 
 let test_multiple_item_list () =
@@ -159,7 +163,7 @@ let test_multiple_item_list () =
         let a = [1; 2; 3]
     |}
     ~expect: [
-        "a", Type.make_scheme [] (Typed.Type.Simple ("List", [Typed.Base_types.int]));
+        "a", Type.make_scheme [] (Typed.Type.Simple (foreign_name "List", [Typed.Base_types.int]));
     ] 
 
 let test_type_mismatch_test() =
@@ -175,7 +179,7 @@ let test_type_mismatch_test() =
         let a = [1; "invalid"]
     |}
     ~expect: [
-        "a", Type.make_scheme [] (Typed.Type.Simple ("List", [Typed.Base_types.int]));
+        "a", Type.make_scheme [] (Typed.Type.Simple (foreign_name "List", [Typed.Base_types.int]));
     ] 
 
 let tests = [

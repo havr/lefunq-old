@@ -15,6 +15,7 @@ let foo = []
 
 let skip = [
     (* move "not char" into combinator *)
+    seq [str "#"; (many @@ not @@ char "\n")];
     seq [str "//"; (many @@ not @@ char "\n")];
     seq [str "/*"; (many @@ not @@ str "*/"); str "*/"];
     oneMore (char " \t");
@@ -31,6 +32,8 @@ let dot_qualified = seq[char "."; ident_part]
 let qualified_ident = seq[ident_part; maybe @@ many dot_qualified]
 
 let defs = [
+    ((fun _ -> Type), 
+        str "type");
     ((fun _ -> Module), 
         str "module");
     ((fun _ -> Foreign), 

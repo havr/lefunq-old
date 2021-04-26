@@ -1,10 +1,40 @@
 open Base
 open Common
+open Typed_common
 
 (* TODO (refactor): 
     - move pp/stuff out
     - add typed / spanned annotations everywhere
 *)
+module TypeIdent = struct 
+    type arg = {label: string; optional: bool; typ: t}
+    and t = Simple of {
+        given: string Span.t;
+        name: Type.name;
+        args: t list;
+    }
+    | Var of {
+        given: string Span.t
+    }
+    | Lambda of {
+        arg: arg;
+        result: t;
+    } 
+    | Tuple of {
+        items: t list;
+    }
+    | Unit
+end
+
+module Typedef = struct 
+    type param = {var: string Span.t}
+    type t = {
+        name: string Span.t;
+        scope_name: string;
+        params: param list;
+        def: Type.def;
+    }
+end
 
 module rec Cond: sig 
     type case = {
@@ -45,6 +75,7 @@ and Param: sig
         | Extension of {name: name}
 
     type t = {
+        type_ident: TypeIdent.t option;
         typ: Type.t;
         value: param
     }
@@ -69,6 +100,7 @@ end = struct
         | Extension of {name: name}
 
     type t = {
+        type_ident: TypeIdent.t option;
         typ: Type.t;
         value: param
     }
@@ -133,17 +165,17 @@ end = struct
 end
 and Foreign: sig 
     type t = {
-        typ: Type.t;
+        type_ident: TypeIdent.t;
         range: Span.range;
         name: string;
-        scheme: Type.scheme option;
+        typ: Type.t;
     }
 end = struct 
     type t = {
-        typ: Type.t;
+        type_ident: TypeIdent.t;
         range: Span.range;
         name: string;
-        scheme: Type.scheme option;
+        typ: Type.t;
     }
 
 end
@@ -151,8 +183,7 @@ and Ident: sig
     type t = {
         typ: Type.t;
         range: Span.range;
-        resolved: Symbol.Resolved.t; 
-        resolution: Symbol.Resolved.t list;
+        qual: Qualified.t;
         (* scheme: Type.scheme option; *)
     }
 
@@ -161,8 +192,7 @@ end = struct
     type t = {
         typ: Type.t;
         range: Span.range;
-        resolved: Symbol.Resolved.t; 
-        resolution: Symbol.Resolved.t list;
+        qual: Qualified.t;
     }
     (* Use "equal" everywhere *)
     (* let equals a b =
@@ -383,22 +413,25 @@ end = struct
         | Match ma -> ma.typ
 end
 
-module Import = struct 
-    type name = {
+module Using = struct 
+    type import = Wildcard | Only of (string Span.t)
+    type root = Source of {
         name: string Span.t;
-        path: string Span.t list;
-        resolved: Symbol.Module.exposed option;
-    }
+        resolved: string
+    } | Local of string Span.t
 
     type t = {
-        resolved_source: string;
-        source: string Span.t;
-        names: name list;
+        root: root;
+        names: (import * string Span.t list) list;
+        resolved: (string * Symbol.Module.exposed) list;
     }
 end
 
 module Module = struct
-    type entry = Binding of Let.t | Import of Import.t | Module of t
+    type entry = Binding of Let.t 
+        | Using of Using.t 
+        | Module of t
+        | Typedef of Typedef.t
     and t = {
         given_name: string;
         scope_name: string;
@@ -413,31 +446,68 @@ module Print_node = struct
     (* let typed ~fn n = 
         text ((Span.range_str n.range) ^ ":" ^ (Type.to_string n.typ) ^ "#" ^ () *)
 
+    let typedef n = 
+        let def_str = match Typedef.(n.def) with
+            | Type.Foreign -> branch [text "foreign"] []
+            | Type.Unresolved -> branch [text "<unresolved>"] []
+        in
+        Pp.(branch [text "TYPE"; spanned n.name; text n.scope_name] [def_str])
+
+    let rec type_ident = function
+        | TypeIdent.Var v -> 
+            Pp.(branch [text "VAR"; spanned v.given] [])
+        | TypeIdent.Simple t -> 
+            let qual_name = t.name.resolved.path @ [t.name.resolved.name]
+            |> List.map ~f: (Resolved.to_string)
+            |> String.concat ~sep: "/" in
+            Pp.(branch [text "TYPE"; text qual_name] (List.map ~f: type_ident t.args))
+        | TypeIdent.Lambda {arg; result} -> 
+            let arg_node = if not @@ String.is_empty arg.label then (
+                [Pp.branch [text  @@ arg.label ^ (if arg.optional then "?" else "") ^ ":"] []]
+            ) else [] in
+            Pp.(branch [text "LAMBDA"] (arg_node @ [type_ident arg.typ; type_ident result]))
+        | TypeIdent.Tuple t -> Pp.(branch [text "TUPLE"] (List.map t.items ~f: type_ident))
+        | TypeIdent.Unit -> Pp.(branch [text "()"] [])
+
     let rec modu n = 
         let entries = List.map Module.(n.entries) ~f: (function 
+            | Typedef t -> typedef t
             | Binding t -> let' t
-            | Import i -> import i
+            | Using u -> using u
             | Module m -> modu m
         ) in
         Pp.(branch [text "MODULE"; text n.given_name; text n.scope_name] entries)
-    and import n = 
-        let exact = List.map Import.(n.names) ~f: (fun m -> 
-            let resolved = match m.resolved with
-                | None -> []
-                | Some {typedef; modu; binding} -> 
-                    Option.map typedef ~f:(fun _ -> branch [text "typedef"] [])
-                    :: Option.map modu ~f:(fun m -> branch [text "module"; text (Symbol.Id.to_string m.id)] [])
-                    :: Option.map binding ~f:(fun m -> branch [
-                        text "binding";
-                        text (Symbol.Id.to_string m.id);
-                    ] [])
-                    :: []
-                    |> List.filter ~f: (Option.is_some)
-                    |> List.map ~f: (fun op -> Option.value_exn op)
-            in
-            branch [spanned m.name; m.path |> List.map ~f: (fun s -> Span.(s.value)) |> String.concat |> text] resolved
-        ) in
-        branch [text "import"; spanned n.source] exact
+    and using n = 
+        let resolved = (fun Symbol.Module.{typedef; modu; binding} ->
+            Option.map typedef ~f:(fun _ -> branch [text "typedef"] [])
+            :: Option.map modu ~f:(fun m -> branch [text "module"; text (Id.to_string m.id)] [])
+            :: Option.map binding ~f:(fun m -> branch [
+                text "binding";
+                text (Id.to_string m.id);
+            ] [])
+            :: []
+            |> List.filter ~f: (Option.is_some)
+            |> List.map ~f: (fun op -> Option.value_exn op)
+        )
+        in
+        let names = 
+            let ns = List.map Using.(n.names) ~f: (fun (imp, path) ->
+                let imp = match imp with
+                    | Using.Only n -> spanned n
+                    | Using.Wildcard -> text "*"
+                in
+                branch ([imp; text "from"] @ (List.map path ~f:spanned)) []
+            ) in branch [text "names"] ns
+        in
+        let resolved = 
+            let ws = List.map Using.(n.resolved) ~f: (fun (name, res) ->
+                branch [text name] (resolved res)
+            ) in branch [text "resolved"] ws
+        in
+        let root = match n.root with
+            | Using.Local loc -> [spanned loc]
+            | Using.Source {resolved; name} -> [spanned name; text resolved]
+        in branch ([text "import"] @ root) [names; resolved]
 
     and expr e = 
         let open Expr in 
@@ -519,27 +589,23 @@ module Print_node = struct
 
     and ident n = 
         let resolved r = 
-            let abs = match Symbol.Resolved.(r.absolute) with
+            let abs = match Resolved.(r.resolved) with
             | None -> "<unresolved>"
-            | Some m -> Symbol.Id.to_string m
+            | Some m -> Id.to_string m
             in r.given ^ "(" ^ abs ^ ")"
         in
-        let names = n.resolution 
+        let names = n.qual.path
             |> List.map ~f:resolved 
             |> String.concat ~sep: "."
         in branch [
             text "IDENT"; 
-            text @@ "resolved:" ^ (resolved n.resolved);
+            text @@ "resolved:" ^ (resolved n.qual.name);
             text names;
             text @@ "type:" ^ (Type.to_string n.typ)
         ] []
 
     and foreign m = 
-        let scheme_str = match m.scheme with
-        | None -> "<no scheme>"
-        | Some m -> Type.scheme_to_string m
-        in
-        branch [text "FOREIGN"; text m.name; text scheme_str] []
+        branch [text "FOREIGN"; text m.name; text (Type.to_string m.typ)] [type_ident m.type_ident]
 
     and value n = branch [text "VALUE"; n.typ |> Type.to_string |> text; text n.value] []
 

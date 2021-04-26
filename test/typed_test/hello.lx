@@ -162,3 +162,11 @@ x ? ErrCause {
   | ErrEof _ -> 0
   | t -> 1
 }
+
+
+let webpage = H.html [
+    H.head [H.title [str "Hello"]]
+    H.body [
+        H.div &className: "foo" []
+    ]
+]

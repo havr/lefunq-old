@@ -61,9 +61,9 @@ let sigs = EndToEnd.define "sigs" [
     (* {
         name = "working";
         expect = "hello";
-        main = "main.le";
+        main = "main";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 sig Str -> Str 
                 let f x = x
                 let main = {
@@ -84,9 +84,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "destruct_tuple_params";
         expect = "-2";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let fn (a, (b, c)) = a * (b - c)
                 let main = {
                     println (fn (2, (2, 3)))
@@ -97,9 +97,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_immediate_optional_scope";
         expect = "8";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let fn &{a=1} &{b=a+1} &{c=b+2} () = {
                     a * b * c
                 }
@@ -113,9 +113,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_immediate_optional_2";
         expect = lines ["10"; "100"; "30"];
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn &{a=10} = {
                     println a
@@ -136,9 +136,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_immediate_optional";
         expect = "-10";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn &{x=10} a = x - a
                 let main = {
@@ -150,9 +150,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_immediate_rewrap";
         expect = "11";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn &x a &y b = (x - a) + (y - b)
                 let fn' = fn 10 &x: 20
@@ -165,9 +165,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_rewrap_simple";
         expect = "-10";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn &a b = a - b
                 let fn' = fn 20
@@ -180,9 +180,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_immediate_named2";
         expect = "10";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn &a b &c d = a + b + c + d
                 let main = {
@@ -194,9 +194,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply_immediate_named";
         expect = "60";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn &a b = a + b
                 let main = {
@@ -208,9 +208,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "apply";
         expect = "6";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn a b = a + b
                 let main = {
@@ -222,9 +222,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "multiple";
         expect = "a\nb\nc";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 // comment
                 let fn a = if a > 0 then "a" else if a < 0 then "b" else "c"
                 let main = {
@@ -242,9 +242,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "allows moving |> and $ to the next line";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let (|>) x f = f x 
                 let ($) f x = f x
                 let add a b = a + b
@@ -257,9 +257,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "specifies a custom operator";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let (|>) x f = f x 
                 let main = 42 |> println
             |}
@@ -269,9 +269,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "translates non-ident js symbols";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let __should'run'' = 42
                 let main = println __should'run''
             |}
@@ -281,9 +281,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "comparison";
         expect = "more\nless\nequal";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let if_chain n = if n > 0 then "more" else if n < 0 then "less" else "equal"
                 let main = {
                     println (if_chain 1)
@@ -297,9 +297,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "factorial";
         expect = "720";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let rec fact n = 
                     if n > 1 then 
                         n * (fact (n - 1)) 
@@ -314,9 +314,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "js is precedence-aware when it puts parens";
         expect = "189";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = println ((1 + 2) * (3 + 4) * (4 + 5))
             |}
         ]
@@ -324,9 +324,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "parses multiple parens correctly";
         expect = "triple_parens";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = println ((("triple_parens")))
             |}
         ]
@@ -335,9 +335,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "test";
         expect = "hello, world";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = println "hello, world"
             |}
         ]
@@ -345,9 +345,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "lambda with multiple arguments";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = \a b {let c = a + b; println c} 2 40
             |}
         ]
@@ -355,9 +355,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "lambda that calls lambda";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = \a b {let c = a b; println c} \a {2 + a} 40 
             |}
         ]
@@ -365,9 +365,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "let-fn";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let myfn a b = a + b
                 let main = {let a = myfn 40 2; println a}
             |}
@@ -377,9 +377,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "simple lists";
         expect = "[ 1, 2, 3 ]";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = println [1; 2; 3]
             |}
         ]
@@ -387,9 +387,9 @@ let lambdas = EndToEnd.define "lambdas" [
     {
         name = "simple tuples";
         expect = "[ 1, 2, 3 ]";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = println (1, 2, 3)
             |}
         ]
@@ -400,9 +400,9 @@ let matching = EndToEnd.define "js:pattern-match" [
     {
         name = "numbers";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let main = {
                     let result = 1 ? {
                         | 1 -> 42
@@ -417,9 +417,9 @@ let matching = EndToEnd.define "js:pattern-match" [
     {
         name = "tuples";
         expect = "10\n20\n30";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let fn x = x ? {
                     | a, 0 -> a
                     | 0, b -> b
@@ -437,9 +437,9 @@ let matching = EndToEnd.define "js:pattern-match" [
     {
         name = "lists";
         expect = "0\n1\n-1";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 let fn n = n ? {
                     | [] -> 0
                     | [n] -> n
@@ -460,9 +460,9 @@ let modules = EndToEnd.define "modules" [
     {
         name = "simple module";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 module Test = {
                     let answer = 42
                 }
@@ -473,9 +473,9 @@ let modules = EndToEnd.define "modules" [
     {
         name = "nested module";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 module Test = {
                     module Nested = {
                         module Deep = {
@@ -490,9 +490,9 @@ let modules = EndToEnd.define "modules" [
     {
         name = "shadowed module";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 module Test = {
                     let answer = 100
                 }
@@ -506,9 +506,9 @@ let modules = EndToEnd.define "modules" [
     {
         name = "shadowed module 2";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/main.le", {|
+            "/main.lf", {|
                 module Test = {
                     let answer = 42
                 }
@@ -523,15 +523,15 @@ let modules = EndToEnd.define "modules" [
     {
         name = "using modules";
         expect = "42";
-        main = "main.le";
+        main = "main.lf";
         files = [
-            "/other.le", {|
+            "/other.lf", {|
                 module Test = {
                     let answer = 42
                 }
             |};
-            "/main.le", {|
-                import "./other.le" { Test }
+            "/main.lf", {|
+                import "./other" { Test }
                 let main = println Test.answer
             |}
         ]
@@ -548,4 +548,21 @@ let modules = EndToEnd.define "modules" [
     }; *)
 ]
 
-let tests = [sigs; lambdas; modules; matching] 
+let using = EndToEnd.define "using" [
+    {
+        name = "file-module as module";
+        expect = "hello";
+        main = "main.lf";
+        files = [
+            "/other.lf", {|
+                let hello = "hello"
+            |};
+            "/main.lf", {|
+                import "./other" as Other
+                let main = println Other.hello
+            |}
+        ]
+    };
+]
+
+let tests = [sigs; lambdas; modules; matching; using] 

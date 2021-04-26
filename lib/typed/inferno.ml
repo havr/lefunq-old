@@ -1,6 +1,7 @@
 open Common
 open Base
 open Type_util
+open Typed_common
 
 type env = Type.scheme StringMap.t
 
@@ -49,7 +50,7 @@ let unify ta tb =
         | _, Type.Var vb -> 
             Subst.single vb ta 
         | Type.Simple (a, ap), Type.Simple (b, bp) -> 
-            (match String.equal a b with
+            (match Qualified.equal a.resolved b.resolved with
             | false -> mismatch ()
             | true -> unify_lists ap bp)
         | Type.Tuple tua, Type.Tuple tub ->
@@ -64,8 +65,8 @@ let unify ta tb =
             | `PosParam a, `PosParam b ->
                 unify' substs a b
             | `NamedParam a, `NamedParam b ->
-                if (Bool.equal a.is_optional b.is_optional) && (String.equal a.name b.name) 
-                    then unify' substs a.named_typ b.named_typ 
+                if (Bool.equal a.is_optional b.is_optional) && (String.equal a.param_name b.param_name) 
+                    then unify' substs a.param_typ b.param_typ 
                     else ( (* TODO: Error *) Subst.empty)
             | `PosParam _, `NamedParam _ ->
                 (* TODO: error *)

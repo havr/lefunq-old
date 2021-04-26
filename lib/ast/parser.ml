@@ -70,6 +70,7 @@ module Lexemes = struct
     let matc = match_map(function | Match -> Some () | _ -> None)
     let ampersand = match_map(function | Ampersand -> Some () | _ -> None)
     let colon = match_map(function | Colon -> Some () | _ -> None)
+    let type' = match_map(function | Type -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -113,6 +114,15 @@ let expect ?ctx ?exp p =  { fn = fun state ->
             Error {e with no_match = false; err_msg = total}
         else Error e
 }
+
+(* TODO: move to some kind of "common" *)
+let is_ident_uppercase name = 
+    let rec trim_underscores = function
+        | "" -> ""
+        | str -> if Char.equal (String.get str 0) '_' 
+            then String.sub str ~pos:0 ~len:1 |> trim_underscores 
+            else str
+    in Char.is_uppercase @@ String.get (trim_underscores name) 0
 
 let choicef parserfns = { fn = fun state -> 
     let found = List.find_map parserfns ~f:(fun parser -> 
@@ -202,19 +212,22 @@ let merge_spanned fn = function
 let (pattern_block: unit -> Node.Match.cases Comb.t), set_pattern_block = forward_decl ()
 
 module Type = struct 
+
     let rec typ' () = choicef [
         (fun () -> lambda ());
         (fun () -> simple ());
         (fun () -> tuple ());
     ]
     and simple () =
-        let+ id = Lexemes.ident 
-        and+ args = many (*type'*) Lexemes.ident in
-        Node.Type.Simple {
-            name = id;
-            args = List.map args ~f:(fun arg -> 
-                Node.Type.Simple {name = arg; args = []})
-        }
+        let+ id = Lexemes.ident
+        (* TODO: don't allow id args *)
+        and+ args = many (param_typ ()) in
+        if is_ident_uppercase id.value then 
+            Node.Type.Simple {
+                name = id;
+                args = args; 
+            }
+        else Node.Type.Var {name = id}
     and lambda () =
         let+ arg = choicef [
             (fun () -> simple ());
@@ -235,7 +248,7 @@ module Type = struct
         | [n] -> n
         | items -> Node.Type.Tuple { items }
 
-    let param_typ = choicef [
+    and param_typ () = choicef [
         (fun () -> simple ());
         (fun () -> tuple ());
     ]
@@ -243,19 +256,45 @@ end
 
 let scheme = Type.typ'
 
+module Typedef = struct 
+    open Node
+
+    let foreign = 
+        let+ span = Lexemes.foreign in Typedef.Foreign (span.range)
+
+    let typedef = 
+        (* TODO: only uppercase  *)
+        let param =
+            let ident = Lexemes.ident
+                |> validate (fun f -> if not @@ is_ident_uppercase Span.(f.value) then `Ok f else `SyntaxErr "type variable should start with a lowercase letter")
+            in ident
+        in
+        let+ _ = Lexemes.type'
+        and+ name = expect @@ ignore_newline @@ Lexemes.ident
+            |> validate (fun f -> if is_ident_uppercase Span.(f.value) then `Ok f else `SyntaxErr "type name should start with an uppercase letter")
+        and+ params = expect @@ ignore_newline @@ many @@ param
+        and+ _ = expect @@ ignore_newline @@ Lexemes.eq
+        and+ def = expect @@ ignore_newline @@ choice [foreign] in
+        Typedef.{
+            name;
+            def;
+            params = List.map params ~f: (fun var -> {var})
+        }
+end
+
 module Param = struct 
     let block_param ~expr = 
         let+ name = Lexemes.ident
         and+ opt = maybe @@ Lexemes.matc 
-        and+ typ = maybe @@ (
+        and+ type_ident = maybe @@ (
             let+ _ = Lexemes.colon
-            and+ typ = Type.param_typ in typ)
+            and+ type_ident = (Type.param_typ ()) in type_ident)
         and+ default = maybe @@ (
             let+ _ = Lexemes.eq
             and+ e = expect @@ ignore_newline @@ (expr ()) in e
         ) in match (opt, default) with 
-            | None, None -> Node.Param.Named {name; typ}
-            | _, expr -> Node.Param.Optional {name; typ; expr}
+            | None, None -> Node.Param.Named {name; type_ident}
+            | _, expr -> Node.Param.Optional {name; type_ident; expr}
 
     let block ~expr = 
         let semi = 
@@ -273,10 +312,10 @@ module Param = struct
     let extension = 
         let+ _ = Lexemes.spread
         and+ name = expect @@ Lexemes.ident
-        and+ typ = expect @@ (
+        and+ type_ident = expect @@ (
             let+ _ = Lexemes.colon
-            and+ typ = Type.param_typ in typ
-        ) in [Node.Param.Extension {name; typ}]
+            and+ type_ident = (Type.param_typ ()) in type_ident
+        ) in [Node.Param.Extension {name; type_ident}]
 
     let single_block_param ~expr = 
         let+ _ = Lexemes.open_paren
@@ -286,12 +325,12 @@ module Param = struct
     let single = 
         let+ name = Lexemes.ident
         and+ opt = maybe @@ Lexemes.matc 
-        and+ typ = maybe @@ (
+        and+ type_ident = maybe @@ (
             let+ _ = Lexemes.colon
-            and+ typ = Type.param_typ in typ) 
+            and+ type_ident = (Type.param_typ()) in type_ident) 
         in match opt with
-        | None -> [Node.Param.Named {name; typ}]
-        | Some _ -> [Node.Param.Optional {name; typ; expr = None}]
+        | None -> [Node.Param.Named {name; type_ident}]
+        | Some _ -> [Node.Param.Optional {name; type_ident; expr = None}]
         
 
     let named ~expr = 
@@ -320,34 +359,36 @@ module Param = struct
     ]
 
     let param ~expr = choicef [
-        (fun () -> map (positional()) (fun shape -> [Node.Param.Positional {shape; typ = None}]));
+        (fun () -> map (positional()) (fun shape -> [Node.Param.Positional {shape; type_ident = None}]));
         (fun () -> named ~expr);
     ]
 end
 
-let import = 
+let using = 
     let rename = 
         let+ _ = Lexemes.ident_of ["as"]
-        and+ ident = expect ~exp: "identifier" @@ Lexemes.ident
+        and+ ident = expect ~exp: "identifier" @@ Lexemes.ident 
+        (* TODO: validate case when renaming, ident shouldn't be qualified *)
         in ident
     in
 
     let rec nested_name () = 
-        let+ ident = Lexemes.ident
-        and+ modifier = maybe @@ choicef [
-            (fun () -> map rename (fun ident -> `Rename ident));
-            (fun () -> map (nested_block ()) (fun names -> `Nested names));
-        ] in
-        Node.Import.{
-            name = ident;
-            rename = begin match modifier with
-                | Some `Rename ident -> Some ident
-                | _ -> None 
-            end;
-            nested = match modifier with
-                | Some `Nested names -> Some names
-                | _ -> None
-        }
+        let wildcard = 
+            let+ op = Lexemes.operator_of ["*"] in
+                Node.Using.Wildcard (op)
+        in
+        let ident = 
+            let+ name = Lexemes.ident
+            and+ action = maybe @@ choice [
+                map rename (fun ident -> Node.Using.Rename ident);
+                map (nested_block ()) (fun names -> Node.Using.Nested names);
+            ] in
+            Node.Using.Ident {
+                name = name;
+                action = action 
+            }
+        in 
+        choice [wildcard; ident]
     and nested_block () =
         let+ _ = Lexemes.open_block
         and+ names = separated_by (choice [
@@ -358,23 +399,18 @@ let import =
         in names
     in
     let+ keyword = Lexemes.import
-    and+ source = Lexemes.str 
-    and+ modifier = maybe @@ choicef [
-        (fun () -> map rename (fun ident -> `Rename ident));
-        (fun () -> map (nested_block()) (fun names -> `Nested names))
+    and+ kind = choice [
+        map Lexemes.str  (fun global -> Node.Using.Global global);
+        map Lexemes.ident (fun local -> Node.Using.Local local);
+    ]
+    and+ action = choicef [
+        (fun () -> map rename (fun ident -> Node.Using.Rename ident));
+        (fun () -> map (nested_block()) (fun names -> Node.Using.Nested names))
     ] in
-    Node.Import.{
+    Node.Using.{
         keyword; 
-        source = 
-        Node.Import.{ name = source;
-            rename = begin match modifier with
-                | Some `Rename ident -> Some ident
-                | _ -> None
-            end;
-            nested = match modifier with
-                | Some `Nested names -> Some names
-                | _ -> None
-        }
+        kind;
+        action;
     }
     
 let allow_operator_wrap op = ["-"; "+"] 
@@ -392,8 +428,12 @@ let operator_ident =
 
 let foreign = 
     let+ _ = Lexemes.foreign 
-    and+ name = Lexemes.str 
-    in (Node.Value.Foreign name) 
+    and+ name = expect @@ ignore_newline @@ Lexemes.str 
+    and+ typ = expect @@ ignore_newline @@ (Type.param_typ ())
+    in (Node.Value.Foreign Node.Foreign.{
+        name = name;
+        typ = typ;
+    }) 
 let rec value () = choice [
     map Lexemes.int (fun i -> Node.Value.Int i);
     map Lexemes.str (fun s -> Node.Value.Str s);
@@ -712,8 +752,9 @@ and lambda () =
 and module_entries () = 
     let root_stmt () = choicef [
         (fun () -> map (sig_()) (fun v -> Node.Module.Let v));
+        (fun () -> (map Typedef.typedef) (fun v -> Node.Module.Typedef v));
         (fun () -> map (let_()) (fun v -> Node.Module.Let v));
-        (fun () -> map (import) (fun v -> Node.Module.Import v));
+        (fun () -> map (using) (fun v -> Node.Module.Using v));
         (fun () -> map (modu ()) (fun m -> Node.Module.Module m));
     ] in let separated_block_stmt = 
         let+ stmt = ignore_newline @@ (root_stmt ())
@@ -787,7 +828,7 @@ let () = init_modu (fun () ->
 let root = 
     let+ entries = module_entries ()
     and+ _ = expect 
-        ~exp: "toplevel statement or end of file" 
+        ~exp: "toplevel statement" 
         @@ ignore_newline @@ eof in
     Node.Root.{
         entries

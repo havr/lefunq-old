@@ -65,26 +65,30 @@ type ctx = {
 let resolve_ident ~ctx = function
     | [] -> raise (Common.Unreachable)
     | head :: rest -> 
-        let abs = Option.value_exn Typed.Symbol.Resolved.(head.absolute) in
+        let abs = Option.value_exn Typed.Typed_common.Resolved.(head.resolved) in
         let head_part = (match abs.source with
             | "" -> ident_value abs.name
             | source -> (match String.equal source ctx.source with
                 | true -> ident_value abs.name
                 | false -> 
-                    ((Map.find_exn ctx.required_sources source) ^ "." ^ (ident_value head.given))
-            )
+                    let src = Map.find_exn ctx.required_sources source in
+                    (match abs.name with 
+                        | "" -> src
+                        | _ -> src ^ "." ^ (ident_value head.given)
+                    ))
         ) in
         (head_part :: (List.map rest ~f: (fun r -> ident_value r.given)) 
             |> String.concat ~sep:".")
 
 let ident ~ctx n = 
-    let id = Option.value_exn ~message: Typed.Ident.("No resolution for:" ^ n.resolved.given) Typed.Ident.(n.resolved.absolute) in
+    let id = Option.value_exn ~message: 
+        Typed.Ident.("No resolution for:" ^ (Typed.Typed_common.Qualified.given n.qual)) n.qual.name.resolved in
     (*TODO: epic kludge. introduce foreigns asap  *)
     if String.equal id.name "println" then begin 
         Ast.Ident.{value = ident_value "println"}
     end
     else
-    Ast.Ident.{value = (resolve_ident ~ctx @@ n.resolution @ [n.resolved])}
+    Ast.Ident.{value = (resolve_ident ~ctx @@ n.qual.path @ [n.qual.name])}
 
 let basic b =
     if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.str 
@@ -100,7 +104,7 @@ let rec apply ~ctx n = begin
     match Typed.Apply.(n.fn) with 
     | Typed.Expr.Ident m -> 
         (* TODO: !!FQN like!! import.value *)
-        let local_name = (Option.value_exn m.resolved.absolute).name in
+        let local_name = (Option.value_exn m.qual.name.resolved).name in
         if not @@ is_js_operator local_name then
             Convert_apply.convert ~expr: (expr ~ctx) n (Ast.Expr.Ident (ident ~ctx m))
         else begin
@@ -121,34 +125,6 @@ let rec apply ~ctx n = begin
         end
     | fn -> 
         Convert_apply.convert ~expr: (expr ~ctx) n (expr ~ctx fn)
-        (* input type Int -> Int -> Int
-        (* each arg swallows the signature *)
-        (* if the order *)
-        (* get initial signature *)
-        f a b c d = (a) => (b) => (c) => d
-
-
-        in let conv' = Typed.Node.Expr.typ n.fn in
-            List.fold m.args ~init: conv' ~f: (fun covg -> function
-                | Typed.Node.Apply.PosArg p ->
-
-                | Typed.Node.Apply.NameArg p ->
-            )
-        let wrap_sig = 
-            |> List.map ~f: (function 
-                | PosArg {expr} ->
-                | 
-            )
-
-
-        let fn = expr ~ctx n.fn in 
-        let loop lam = function
-            | Typed.Node.Apply.PosArg {expr = e} -> 
-                expr ~ctx e
-            | Typed.Node.Apply.NameArg {expr = e} -> 
-                let (typ, rest) = Typed.Type.Lambda.split_head lam in
-        in
-        apply_seq ~ctx (expr ~ctx n.fn) n.args *)
 
 end and expr ~ctx  = function
     | Typed.Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (expr ~ctx))
@@ -272,11 +248,13 @@ and let_ ~ctx n =
     Ast.Const.{ name = ident_value n.scope_name; expr = const_expr }
 
 and modu_entries ~ctx entries = 
+    let open Typed.Node in
     List.filter_map entries ~f: (function
-        | Typed.Node.Module.Import _ -> None
-        | Typed.Node.Module.Binding node -> 
+        | Module.Using _ -> None
+        | Module.Binding node -> 
             Some (Ast.Block.Const (let_ ~ctx node))
-        | Typed.Node.Module.Module m -> Some (Ast.Block.Const (modu ~ctx m))
+        | Module.Module m -> Some (Ast.Block.Const (modu ~ctx m))
+        | Module.Typedef _ -> (raise Common.TODO)
     )
 
 and exposed_entries exposed = 
@@ -308,7 +286,7 @@ let module_exports ~ctx root =
             | None -> [] 
             | Some b -> 
                 [
-                    ([Typed.Symbol.Resolved.make name (Some b.id)] 
+                    ([Typed.Typed_common.Resolved.make name (Some b.id)] 
                     |> resolve_ident ~ctx
                     |> Ast.Ident.make
                     |> Ast.Expr.ident
@@ -322,7 +300,7 @@ let module_exports ~ctx root =
             | None -> [] 
             | Some b -> 
                 [
-                    ([Typed.Symbol.Resolved.make name (Some b.id)] 
+                    ([Typed.Typed_common.Resolved.make name (Some b.id)] 
                     |> resolve_ident ~ctx
                     |> Ast.Ident.make
                     |> Ast.Expr.ident

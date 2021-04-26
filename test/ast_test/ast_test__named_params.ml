@@ -13,7 +13,7 @@ let tests = [
     "named", `Quick, (fun () -> test 
         ~input: "&foo" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; typ = None}
+            Param.Named {name = Span.empty "foo"; type_ident = None}
         ]
     );
 
@@ -21,21 +21,22 @@ let tests = [
     "named_typed", `Quick, (fun () -> test 
         ~input: "&foo: Int" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; typ = Some(Type.Simple {name = Span.empty "Int"; args = []})}
+            Param.Named {name = Span.empty "foo"; type_ident = Some(
+                Type.Simple {name = Span.empty "Int"; args = []})}
         ]
     );
 
     "named_parens", `Quick, (fun () -> test 
         ~input: "&(foo)" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; typ = None};
+            Param.Named {name = Span.empty "foo"; type_ident = None};
         ]
     );
 
     "named_parens_optional", `Quick, (fun () -> test 
         ~input: "&(foo?)" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; typ = None; expr = None};
+            Param.Optional {name = Span.empty "foo"; type_ident = None; expr = None};
         ]
     );
 
@@ -44,7 +45,7 @@ let tests = [
         ~expect: [
             Param.Optional {
                 name = Span.empty "foo"; 
-                typ = None; 
+                type_ident = None; 
                 expr = Some (
                     Expr.Value(Value.Int(Span.empty "2"))
                 )
@@ -57,7 +58,7 @@ let tests = [
         ~expect: [
             Param.Optional {
                 name = Span.empty "foo"; 
-                typ = None; 
+                type_ident = None; 
                 expr = Some (
                     Expr.Value(Value.Int(Span.empty "2"))
                 )
@@ -68,8 +69,8 @@ let tests = [
     "named_group", `Quick, (fun () -> test 
         ~input: "&{foo; bar}" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; typ = None};
-            Param.Named {name = Span.empty "bar"; typ = None}
+            Param.Named {name = Span.empty "foo"; type_ident = None};
+            Param.Named {name = Span.empty "bar"; type_ident = None}
         ]
     );
 
@@ -79,8 +80,8 @@ let tests = [
             bar
         }" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; typ = None};
-            Param.Named {name = Span.empty "bar"; typ = None}
+            Param.Named {name = Span.empty "foo"; type_ident = None};
+            Param.Named {name = Span.empty "bar"; type_ident = None}
         ]
     );
 
@@ -90,29 +91,29 @@ let tests = [
             bar
         }" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; typ = Some(Type.simple (Span.empty "Int") [])};
-            Param.Named {name = Span.empty "bar"; typ = None}
+            Param.Named {name = Span.empty "foo"; type_ident = Some(Type.simple (Span.empty "Int") [])};
+            Param.Named {name = Span.empty "bar"; type_ident = None}
         ]
     );
 
     "named_optional", `Quick, (fun () -> test 
         ~input: "&{foo?}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; typ = None; expr = None};
+            Param.Optional {name = Span.empty "foo"; type_ident = None; expr = None};
         ]
     );
 
     "named_typed_optional", `Quick, (fun () -> test 
         ~input: "&{foo?:Int}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; typ = Some(Type.simple (Span.empty "Int") []); expr = None};
+            Param.Optional {name = Span.empty "foo"; type_ident = Some(Type.simple (Span.empty "Int") []); expr = None};
         ]
     );
 
     "named_default", `Quick, (fun () -> test 
         ~input: "&{foo = 2 + 2}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; typ = None; 
+            Param.Optional {name = Span.empty "foo"; type_ident = None; 
             expr = Some(
                 Expr.Apply(Apply.{
                     fn = Expr.Value(Value.Ident(Span.empty "+"));
@@ -129,7 +130,7 @@ let tests = [
     "named_typed_default", `Quick, (fun () -> test 
         ~input: "&{foo: Int = 2 + 2}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; typ = Some(Type.simple (Span.empty "Int") []); 
+            Param.Optional {name = Span.empty "foo"; type_ident = Some(Type.simple (Span.empty "Int") []); 
             expr = Some(
                 Expr.Apply(Apply.{
                     fn = Expr.Value(Value.Ident(Span.empty "+"));
