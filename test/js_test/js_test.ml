@@ -550,6 +550,20 @@ let modules = EndToEnd.define "modules" [
 
 let using = EndToEnd.define "using" [
     {
+        name = "index sources";
+        expect = "hello";
+        main = "main.lf";
+        files = [
+            "/other/index.lf", {|
+                let hello = "hello"
+            |};
+            "/main.lf", {|
+                import "./other" as Other
+                let main = println Other.hello
+            |}
+        ]
+    };
+    {
         name = "file-module as module";
         expect = "hello";
         main = "main.lf";

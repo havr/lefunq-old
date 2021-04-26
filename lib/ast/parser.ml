@@ -379,9 +379,9 @@ let using =
         in
         let ident = 
             let+ name = Lexemes.ident
-            and+ action = maybe @@ choice [
-                map rename (fun ident -> Node.Using.Rename ident);
-                map (nested_block ()) (fun names -> Node.Using.Nested names);
+            and+ action = maybe @@ choicef [
+                (fun () -> map rename (fun ident -> Node.Using.Rename ident));
+                (fun () -> map (nested_block ()) (fun names -> Node.Using.Nested names));
             ] in
             Node.Using.Ident {
                 name = name;

@@ -125,10 +125,13 @@ module Frontend = struct
             | head :: _ -> Core.Filename.dirname head
             | [] -> ctx.config.fs.cwd ()
         in
-        let abs_path = ensure_extension (source_path cwd source) in
-        match Fs.(ctx.config.fs.exists) abs_path with
-        | false -> None
-        | true -> Some abs_path
+        let path = source_path cwd source in
+        let file_path = ensure_extension path in
+        let exists = Fs.(ctx.config.fs.exists) in
+        if exists file_path then Some file_path else (
+            let index_path = path ^ "/index.lf" in
+            if exists index_path then Some index_path else None
+        )
 
 
     type abort_reason = [
