@@ -1,31 +1,6 @@
-open Common
 open Base
-open Type_util
+open Common
 open Typed_common
-
-type env = Type.scheme StringMap.t
-
-type ctx = {
-    tempvar: tempvar_gen;
-    mutable errors: Errors.t list;
-    mutable env: env;
-    mutable substs: Type.t StringMap.t
-}
-
-let make_env () = Map.empty(module String)
-
-(* TODO: make_context *)
-let make_ctx ~env = {
-    env;
-    errors = [];
-    tempvar = make_tempvar_gen "_t";
-    substs = Map.empty (module String)
-}
-
-let free_vars ~ctx typ = Type.free_vars typ
-    |> Set.filter ~f: (fun name -> not @@ Map.mem ctx.substs name) 
-    |> Set.to_list
-
 
 let unify ta tb = 
     let errors = ref [] in
@@ -81,34 +56,3 @@ let unify ta tb =
         | _ -> mismatch ();
     in let result = unify' (Subst.empty) ta tb  in
     (result, (!errors))
-
-let type_mismatch_from = List.map ~f: (fun (expect, got) -> 
-    Errors.TypeMismatch{type_expected = expect; type_provided = got; range = Span.empty_range})
-
-let unify_ctx ~ctx base new' = 
-    let (substs', errors) = unify (Subst.apply ctx.substs base) (Subst.apply ctx.substs new') in
-    ctx.substs <- Subst.combine (*ctx.substs*) substs' ctx.substs;
-    errors
-    (* let (substs', errors) = unify (Subst.apply ctx.substs base) (Subst.apply ctx.substs new') in
-    ctx.substs <- Subst.combine (*ctx.substs*) substs' ctx.substs; *)
-
-let do_unify ~ctx ~error base new' = 
-    match unify_ctx ~ctx base new' with
-    | [] -> true
-    | _ -> 
-        ctx.errors <- ctx.errors @ [error];
-        false
-
-let set_env ~ctx name scheme = 
-    ctx.env <- Map.set ctx.env ~key:name ~data:scheme
-
-let apply~ctx typ = Subst.apply ctx.substs typ
-
-let add_subst ~ctx v typ = 
-    ctx.substs <- Subst.combine ctx.substs (Subst.single v typ) 
-
-let ctx_add_errors ~ctx errors = 
-    List.iter errors ~f:(fun error -> ctx.errors <- ctx.errors @ [error])
-
-let add_error ~ctx error = 
-    ctx.errors <- ctx.errors @ [error]

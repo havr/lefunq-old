@@ -75,7 +75,7 @@ end
 
 let throw e = {fn = fun _ -> Error e}
 
-let precedence = [ ["|>"]; ["$"]; ["+"; "-"]; ["*"; "/"; "%"]; [">"; "<"; "=="; "!="]]
+let precedence = [ ["|>"]; ["$"]; ["+"; "-"; "++"]; ["*"; "/"; "%"]; [">"; "<"; "=="; "!="]]
 
 let wrap p = {fn = p.fn}
 
@@ -106,11 +106,11 @@ let expect ?ctx ?exp p =  { fn = fun state ->
         if e.no_match then 
             let lex_str = e.caused_by |> Lexeme.to_string in
             let unexp_str = "unexpected \"" ^ lex_str ^ "\"" in
-            let ctx_str = match ctx with | Some ctx -> "while " ^ ctx | None -> "" in
-            let exp_str = match exp with | Some exp -> "expecting " ^ exp | None -> "" in
+            let ctx_str = match ctx with | Some ctx -> " while " ^ ctx | None -> "" in
+            let exp_str = match exp with | Some exp -> ". expecting " ^ exp | None -> "" in
             let total = [unexp_str; ctx_str; exp_str] 
                 |> List.filter ~f: (fun str -> not @@ String.is_empty str) 
-                |> String.concat ~sep:" " in
+                |> String.concat ~sep:"" in
             Error {e with no_match = false; err_msg = total}
         else Error e
 }
@@ -217,7 +217,18 @@ module Type = struct
         (fun () -> lambda ());
         (fun () -> simple ());
         (fun () -> tuple ());
+        (fun () -> list ());
     ]
+    and list () = 
+        let+ _ = Lexemes.open_bracket
+        and+ values = separated_by (Lexemes.coma) (typ' ())
+        and+ _ = expect @@ ignore_newline @@ Lexemes.close_bracket in 
+        let typ = match values with
+            | [] -> (raise Common.Unreachable)
+            | [typ] -> typ
+            | items -> (Node.Type.Tuple { items })
+        in Node.Type.List typ
+
     and simple () =
         let+ id = Lexemes.ident
         (* TODO: don't allow id args *)
@@ -231,26 +242,28 @@ module Type = struct
     and lambda () =
         let+ arg = choicef [
             (fun () -> simple ());
+            (fun () -> list ());
             (fun () -> tuple ())
         ]
         and+ _ = Lexemes.func_arrow
-        and+ result = expect @@ typ' () in
+        and+ result = expect @@ ignore_newline @@ typ' () in
         Node.Type.Lambda {
             arg = arg;
             result = result;
         }
     and tuple () = 
         let+ _ = Lexemes.open_paren
-        and+ values = separated_by (Lexemes.coma) (typ' ())
-        and+ _ = expect @@ Lexemes.close_paren in 
+        and+ values = maybe @@ separated_by (Lexemes.coma) (typ' ())
+        and+ _ = expect @@ ignore_newline @@ Lexemes.close_paren in 
         match values with
-        | [] -> Node.Type.Unit
-        | [n] -> n
-        | items -> Node.Type.Tuple { items }
+        | None -> Node.Type.Unit
+        | Some [n] -> n
+        | Some items -> Node.Type.Tuple { items }
 
     and param_typ () = choicef [
         (fun () -> simple ());
         (fun () -> tuple ());
+        (fun () -> list ());
     ]
 end
 
@@ -282,19 +295,42 @@ module Typedef = struct
         }
 end
 
+module Destruct = struct 
+    open Node.Destruct
+    let rec name = let+ id = Lexemes.ident in (Name id)
+    and tuple () =
+        let+ _ = Lexemes.open_paren 
+        and+ content = maybe @@ separated_by (ignore_newline @@ Lexemes.coma) (ignore_newline @@ (shape ()))
+        and+ _ = Lexemes.close_paren in
+        match content with
+        | None -> Unit
+        | Some (single :: []) -> single
+        | Some multiple -> Tuple multiple
+    and shape () = choicef [
+        (fun () -> name); tuple;
+    ]
+end
+
 module Param = struct 
-    let block_param ~expr = 
+    let block_optional ~expr = 
         let+ name = Lexemes.ident
-        and+ opt = maybe @@ Lexemes.matc 
-        and+ type_ident = maybe @@ (
+        and+ _ = Lexemes.matc 
+        and+ alias = maybe @@ (
             let+ _ = Lexemes.colon
-            and+ type_ident = (Type.param_typ ()) in type_ident)
+            and+ alias = Lexemes.ident in alias)
         and+ default = maybe @@ (
             let+ _ = Lexemes.eq
             and+ e = expect @@ ignore_newline @@ (expr ()) in e
-        ) in match (opt, default) with 
-            | None, None -> Node.Param.Named {name; type_ident}
-            | _, expr -> Node.Param.Optional {name; type_ident; expr}
+        ) in Node.Param.Optional {name; alias; default}
+
+    let block_named = 
+        let+ name = Lexemes.ident
+        and+ shape = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ shape = (Destruct.shape ()) in shape
+        ) in Node.Param.Named {name; shape}
+
+    let block_param ~expr = choice [block_optional ~expr; block_named]
 
     let block ~expr = 
         let semi = 
@@ -322,45 +358,33 @@ module Param = struct
         and+ param = expect @@ ignore_newline @@ (block_param ~expr)
         and+ _ = expect @@ ignore_newline @@ Lexemes.close_paren in [param]
 
-    let single = 
+    let optional = 
         let+ name = Lexemes.ident
-        and+ opt = maybe @@ Lexemes.matc 
-        and+ type_ident = maybe @@ (
+        and+ _ = Lexemes.matc 
+        and+ alias = maybe @@ (
             let+ _ = Lexemes.colon
-            and+ type_ident = (Type.param_typ()) in type_ident) 
-        in match opt with
-        | None -> [Node.Param.Named {name; type_ident}]
-        | Some _ -> [Node.Param.Optional {name; type_ident; expr = None}]
-        
+            and+ alias = Lexemes.ident in alias) 
+        in [Node.Param.Optional {name; alias; default = None}]
 
-    let named ~expr = 
+    let named = 
+        let+ name = Lexemes.ident
+        and+ shape = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ shape = (Destruct.shape()) in shape) 
+        in [Node.Param.Named {name; shape}]
+
+    let non_positional ~expr = 
         let+ _ = Lexemes.ampersand 
         and+ value = choice [
-            block ~expr; extension; single; single_block_param ~expr
+            block ~expr; extension; optional; named; single_block_param ~expr
         ] in value
 
-    let rec ident() = 
-        let+ ident = Lexemes.ident in
-        Node.Param.Ident (ident)
-
-    and tuple() = 
-        let+ _ = Lexemes.open_paren 
-        (* todo: annotate *)
-        and+ elems = maybe @@ separated_by Lexemes.coma (positional ())
-        and+ _ = expect 
-            ~ctx: "tuple" 
-            ~exp: "close brace" 
-            @@ ignore_newline @@ Lexemes.close_paren in
-        Node.Param.Tuple(Option.value ~default: [] elems)
-
-    and positional () = choicef [
-        (fun () -> (tuple()));
-        (fun () -> ident())
-    ]
+    let positional = 
+        let+ shape = (Destruct.shape ()) in Node.Param.Positional {shape}
 
     let param ~expr = choicef [
-        (fun () -> map (positional()) (fun shape -> [Node.Param.Positional {shape; type_ident = None}]));
-        (fun () -> named ~expr);
+        (fun () -> map positional (fun p -> [p]));
+        (fun () -> non_positional ~expr);
     ]
 end
 
@@ -719,7 +743,7 @@ and block () =
     let+ open_lex = Lexemes.open_block
     and+ stmts = block_stmts() 
     and+ close_lex = expect 
-        ~ctx: "close block" 
+        ~exp: "block statement or end of block"
         @@ ignore_newline @@ Lexemes.close_block
     in Node.Block.{
         range = Span.merge open_lex.range close_lex.range;
@@ -727,22 +751,24 @@ and block () =
     }
 
 and block_stmt () = 
-    let block_stmt () = choicef [
+    let stmt () = choicef [
         (fun () -> map (sig_()) (fun v -> Node.Block.Let v));
         (fun () -> map (let_()) (fun v -> Node.Block.Let v));
         (fun () -> map (block ()) (fun v -> Node.Block.Block v));
         (fun () -> map (expr ()) (fun v -> Node.Block.Expr v));
+        (fun () -> map (using) (fun v -> Node.Block.Using v));
     ] in 
-        let+ stmt = ignore_newline @@ (block_stmt ())
+        let+ s = ignore_newline @@ (stmt ())
         and+ _ = maybe @@ Lexemes.stmt_separator in 
-        stmt
+        s
 
-and block_stmts () = many (Comb.wrap_fn block_stmt)
+and block_stmts () = one_more (block_stmt()) (*(Comb.wrap_fn block_stmt)*)
 
 and lambda () =
     let+ start = Lexemes.lambda
-    and+ params = many @@ (Param.param ~expr)
-    and+ b = (block ()) in
+    and+ params = many @@ (ignore_newline @@ Param.param ~expr)
+    and+ b = expect @@ ignore_newline @@ (block ()) in
+        Common.log[List.length b.stmts |> Int.to_string];
         Node.Lambda.{
             range=Span.merge start.range b.range;
             params = Util.Lists.flatten params;
@@ -813,10 +839,10 @@ let () = set_pattern_block (fun () ->
 let () = init_modu (fun () ->
     let+ keyword = Lexemes.modu
     and+ name = expect @@ Lexemes.ident
-    and+ _ = expect @@ Lexemes.eq
-    and+ _ = expect @@ Lexemes.open_block
+    and+ _ = expect @@ ignore_newline @@ Lexemes.eq
+    and+ _ = expect @@ ignore_newline @@ Lexemes.open_block
     and+ entries = (module_entries ())
-    and+ close_paren = expect @@ Lexemes.close_block
+    and+ close_paren = expect @@ ignore_newline @@ Lexemes.close_block
     in Node.Module.{
         keyword;
         range = Span.merge keyword.range close_paren.range;

@@ -4,7 +4,7 @@ open Ast_test__helpers
 open Ast.Node
 
 let test = 
-    test (Ast.Parser.Param.named ~expr: Ast.Parser.expr) 
+    test (Ast.Parser.Param.non_positional ~expr: Ast.Parser.expr) 
         (fun block -> Pp.branch [] (List.map block ~f:Param.pretty_print))
 
 
@@ -13,53 +13,42 @@ let tests = [
     "named", `Quick, (fun () -> test 
         ~input: "&foo" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; type_ident = None}
+            Param.Named {name = Span.empty "foo"; shape = None}
         ]
     );
 
     (* TODO: type shouldn't eat the next parameter*)
-    "named_typed", `Quick, (fun () -> test 
-        ~input: "&foo: Int" 
+    "named_destruct_name", `Quick, (fun () -> test 
+        ~input: "&foo: f" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; type_ident = Some(
-                Type.Simple {name = Span.empty "Int"; args = []})}
+            Param.Named {
+                name = Span.empty "foo";
+                shape = Some (Destruct.Name (Span.empty "f"))
+            }
         ]
     );
 
     "named_parens", `Quick, (fun () -> test 
         ~input: "&(foo)" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; type_ident = None};
+            Param.Named {name = Span.empty "foo"; shape = None};
         ]
     );
 
     "named_parens_optional", `Quick, (fun () -> test 
         ~input: "&(foo?)" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; type_ident = None; expr = None};
+            Param.Optional {name = Span.empty "foo"; alias = None; default = None};
         ]
     );
 
     "named_parens_optional_default", `Quick, (fun () -> test 
-        ~input: "&(foo = 2)" 
-        ~expect: [
-            Param.Optional {
-                name = Span.empty "foo"; 
-                type_ident = None; 
-                expr = Some (
-                    Expr.Value(Value.Int(Span.empty "2"))
-                )
-            };
-        ]
-    );
-
-    "named_parens_optional_default_alt", `Quick, (fun () -> test 
         ~input: "&(foo? = 2)" 
         ~expect: [
             Param.Optional {
                 name = Span.empty "foo"; 
-                type_ident = None; 
-                expr = Some (
+                alias = None; 
+                default = Some (
                     Expr.Value(Value.Int(Span.empty "2"))
                 )
             };
@@ -69,8 +58,8 @@ let tests = [
     "named_group", `Quick, (fun () -> test 
         ~input: "&{foo; bar}" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; type_ident = None};
-            Param.Named {name = Span.empty "bar"; type_ident = None}
+            Param.Named {name = Span.empty "foo"; shape = None};
+            Param.Named {name = Span.empty "bar"; shape = None}
         ]
     );
 
@@ -80,41 +69,41 @@ let tests = [
             bar
         }" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; type_ident = None};
-            Param.Named {name = Span.empty "bar"; type_ident = None}
+            Param.Named {name = Span.empty "foo"; shape = None};
+            Param.Named {name = Span.empty "bar"; shape = None}
         ]
     );
 
-    "named_group_typed", `Quick, (fun () -> test 
+    "named_group_shape", `Quick, (fun () -> test 
         ~input: "&{
-            foo: Int
+            foo: f
             bar
         }" 
         ~expect: [
-            Param.Named {name = Span.empty "foo"; type_ident = Some(Type.simple (Span.empty "Int") [])};
-            Param.Named {name = Span.empty "bar"; type_ident = None}
+            Param.Named {name = Span.empty "foo"; shape = Some(Destruct.Name (Span.empty "f"))};
+            Param.Named {name = Span.empty "bar"; shape = None}
         ]
     );
 
     "named_optional", `Quick, (fun () -> test 
         ~input: "&{foo?}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; type_ident = None; expr = None};
+            Param.Optional {name = Span.empty "foo"; alias = None; default = None};
         ]
     );
 
-    "named_typed_optional", `Quick, (fun () -> test 
-        ~input: "&{foo?:Int}" 
+    "optional_alias", `Quick, (fun () -> test 
+        ~input: "&{foo?:f}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; type_ident = Some(Type.simple (Span.empty "Int") []); expr = None};
+            Param.Optional {name = Span.empty "foo"; alias = Some(Span.empty "f"); default = None};
         ]
     );
 
     "named_default", `Quick, (fun () -> test 
-        ~input: "&{foo = 2 + 2}" 
+        ~input: "&{foo? = 2 + 2}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; type_ident = None; 
-            expr = Some(
+            Param.Optional {name = Span.empty "foo"; alias = None; 
+            default = Some(
                 Expr.Apply(Apply.{
                     fn = Expr.Value(Value.Ident(Span.empty "+"));
                     args = [
@@ -127,11 +116,11 @@ let tests = [
         ]
     );
 
-    "named_typed_default", `Quick, (fun () -> test 
-        ~input: "&{foo: Int = 2 + 2}" 
+    "named_typed_destruct", `Quick, (fun () -> test 
+        ~input: "&{foo?: f = 2 + 2}" 
         ~expect: [
-            Param.Optional {name = Span.empty "foo"; type_ident = Some(Type.simple (Span.empty "Int") []); 
-            expr = Some(
+            Param.Optional {name = Span.empty "foo"; alias = Some(Span.empty "f"); 
+            default = Some(
                 Expr.Apply(Apply.{
                     fn = Expr.Value(Value.Ident(Span.empty "+"));
                     args = [

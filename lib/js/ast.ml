@@ -134,11 +134,13 @@ and Object: sig
     type t = {
         entries: entry list
     }
+    val make: entry list -> t
 end = struct 
     type entry = | Kv of (string * Expr.t) | Pun of string
     type t = {
         entries: entry list
     }
+    let make entries = {entries}
 end
 and Property: sig 
     type t = {expr: Expr.t; name: string}

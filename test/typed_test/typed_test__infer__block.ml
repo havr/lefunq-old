@@ -1,13 +1,10 @@
-open Base
+(* TODO: wtf *)
+
+(* open Base
 open Typed_infer_helper
 
     let test ?(errors=[]) ~stmts ~expect_type ~expect = 
-      let ctx = Typed.Inferno.{
-        tempvar = Typed.Type_util.make_tempvar_gen "t";
-        errors = [];
-        substs = Map.empty(module String);
-        env = Map.empty(module String);
-      } in
+      let ctx = Typed.Inferno.make_ctx ~debug: false ~env: (Map.empty(module String)) in
       let typ = Typed.Infer.block ~ctx (Typed.Block.{stmts = stmts; range = Common.Span.empty_range}) in
       check_results ~ctx ~errors ~expect_type ~expect ctx.substs typ
       
@@ -42,4 +39,4 @@ open Typed_infer_helper
      (* TODO: fix and uncomment *)
       (* "ignored result", `Quick, test_not_unit_result_error; *)
       "last statement", `Quick, test_returns_last_statement
-    ]
+    ] *)

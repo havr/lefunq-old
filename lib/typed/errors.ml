@@ -57,6 +57,8 @@ type t =
 } | CannotApplyWithoutLabel of {
     range: Span.range;
     lambda: Type.t;
+} | InternalError of {
+    message: string;
 }
  
 let clear_range = function 
@@ -92,6 +94,7 @@ let clear_range = function
 | UnusedMatchCase _ -> UnusedMatchCase {range = Span.empty_range}
 | CannotApplyWithLabel r -> CannotApplyWithLabel {r with range = Span.empty_range}
 | CannotApplyWithoutLabel r -> CannotApplyWithoutLabel {r with range = Span.empty_range}
+| InternalError i -> InternalError i
 
 let concat = String.concat ~sep: " "
 let to_string = function
@@ -136,5 +139,7 @@ let to_string = function
     concat ["Lambda contains only positional arguments. Cannot apply with label"; Span.range_str range; "Label:"; label; Type.to_string lambda]
 | CannotApplyWithoutLabel{range; lambda} -> 
     concat ["Lambda contains only positional arguments. Cannot apply without a label:"; Span.range_str range; Type.to_string lambda]
+| InternalError {message} ->
+    concat ["Internal error:"; message]
 
 let equals a b = String.equal (to_string a) (to_string b)

@@ -709,6 +709,7 @@ let tests = [
   (* "Unify", Unify.tests; *)
   "Infer", Typed_infer_test.tests;
   "Type", Typed_test__type.tests;
+  "Misc", Typed_test__misc.tests;
   (* "Typed:Let", Typed_test__let.tests;
   "Typed:match", Typed_test__match.tests; *)
   (* "Block", Typed_test__infer__block.tests;

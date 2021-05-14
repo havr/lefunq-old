@@ -55,7 +55,7 @@ let to_string lexeme = match lexeme with
     | Then -> "then"
     | Else -> "else"
     | Rec -> "rec"
-    | Import -> "import"
+    | Import -> "using"
     | Sig -> "sig"
     | FuncArrow -> "->"
     | Foreign -> "foreign"

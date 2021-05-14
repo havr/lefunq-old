@@ -1,6 +1,7 @@
 open Common
 open Base
 
+
 module Type = struct 
     type t = Simple of {
         name: string Span.t;
@@ -9,6 +10,7 @@ module Type = struct
     | Var of {
         name: string Span.t;
     }
+    | List of t
     | Lambda of {
         arg: t;
         result: t;
@@ -25,6 +27,7 @@ module Type = struct
         | Var v -> Pp.(branch [text "Var"; spanned v.name] [])
         | Lambda la -> Pp.(branch [text "LAMBDA"] [pretty_print la.arg; pretty_print la.result])
         | Tuple t -> Pp.(branch [text "TUPLE"] (List.map t.items ~f: pretty_print))
+        | List li -> Pp.(branch [text "LIST"] [pretty_print li])
         | Unit -> Pp.(branch [text "()"] [])
 end
 
@@ -68,49 +71,6 @@ module Using = struct
         in
         branch [spanned n.keyword; kind] (action n.action)
 end
-(* 
-module Import = struct
-    type name = (string Span.t * kind option) 
-    and kind = 
-        | Rename of string Span.t
-        | Names of name list
-
-    type t = {
-        keyword: string Span.t;
-        (* TODO(refactor): name: name *)
-        name: string Span.t;
-        kind: kind option;
-    }
-
-    let tree_repr node =
-        let open Common.Pp in
-        let import = [Pp.spanned node.keyword; spanned node.name] in
-        match node.kind with
-        | None -> branch import []
-        | Some (Rename new_name) -> 
-            branch (import @ [text "as"; spanned new_name]) []
-        | Some (Names names) -> 
-            let rec pp_name (name, kind) = 
-                let args = [spanned name] in
-                match kind with
-                | None -> branch args []
-                | Some (Names names) -> branch args (List.map names ~f:pp_name)
-                | Some (Rename new_name) -> branch (args @ [text "as"; spanned new_name]) []
-            in branch import (List.map names ~f:pp_name)
-end *)
-
-(* module Arg = struct 
-    type ident = {span: Span.range; ident: string}
-    type tuple = {tuple: arg list}
-    and arg = 
-        | Ident of ident
-        | Tuple of tuple
-    type args = {args: arg list}
-
-    let rec pretty_print_arg = function
-        | Ident id -> Pp.(branch [text "IDENT"; text id.ident] [])
-        | Tuple tup -> Pp.(branch [text "TUPLE"] (List.map ~f:pretty_print_arg tup.tuple))
-end *)
 module Unit = struct
     type t = unit Span.t
     let pretty_print _ = Pp.(branch [text "()"] [])
@@ -137,25 +97,35 @@ module Typedef = struct
         Pp.(branch ([text "TYPE"; spanned n.name] @ params) [def])
 end 
 
-module rec Dummy: sig end = struct end
-and Param: sig 
+module Destruct = struct 
     type shape = 
-        | Ident of string Span.t
+        | Unit
+        | Name of string Span.t
         | Tuple of shape list
 
+    open Pp
+
+    let rec pretty_print = function
+        | Unit -> branch [text "()"] []
+        | Name n -> branch [spanned n] []
+        | Tuple t -> branch [text "tuple"] (List.map t ~f: pretty_print)
+end
+
+module rec Dummy: sig end = struct end
+
+and Param: sig 
     type t = 
         | Positional of {
-            shape: shape; 
-            type_ident: Type.t option
+            shape: Destruct.shape;
         }
         | Named of {
             name: string Span.t;
-            type_ident: Type.t option
+            shape: Destruct.shape option;
         }
         | Optional of {
             name: string Span.t;
-            type_ident: Type.t option;
-            expr: Expr.t option
+            alias: string Span.t option;
+            default: Expr.t option
         }
         | Extension of {
             name: string Span.t;
@@ -163,58 +133,44 @@ and Param: sig
         }
 
     val pretty_print: t -> Pp.branch
-    val pretty_print_positional: shape -> Pp.branch
 end = struct
-    type shape = 
-        | Ident of string Span.t
-        | Tuple of shape list
     type t = 
         | Positional of {
-            shape: shape; 
-            type_ident: Type.t option
+            shape: Destruct.shape;
         }
         | Named of {
             name: string Span.t;
-            type_ident: Type.t option
+            shape: Destruct.shape option;
         }
         | Optional of {
             name: string Span.t;
-            type_ident: Type.t option;
-            (* TODO: default *)
-            expr: Expr.t option
+            alias: string Span.t option;
+            default: Expr.t option
         }
         | Extension of {
             name: string Span.t;
             type_ident: Type.t;
         }
 
-    let rec pretty_print_positional = function
-        | Ident id -> Pp.(branch [text "IDENT"; spanned id] [])
-        | Tuple tup -> Pp.(branch [text "TUPLE"] (List.map ~f:pretty_print_positional tup))
-    
     let pretty_print = function
         | Positional p -> 
-            let typ = match p.type_ident with
-                | None -> []
-                | Some m -> [Type.pretty_print m]
-            in
-            Pp.(branch [text "param"] (typ @ [pretty_print_positional p.shape]))
+            Destruct.pretty_print p.shape
         | Named p -> 
-            let typ = match p.type_ident with
+            let shape = match p.shape with
+                | Some s -> [Destruct.pretty_print s]
                 | None -> []
-                | Some m -> [Type.pretty_print m]
             in
-            Pp.(branch [text "&"; spanned p.name] typ)
+            Pp.(branch [text "&"; spanned p.name] shape)
         | Optional p ->
-            let typ = match p.type_ident with
+            let alias = match p.alias with
+                | Some s -> Pp.[text "as"; spanned s]
                 | None -> []
-                | Some m -> [Type.pretty_print m]
             in
-            let expr = match p.expr with
+            let default = match p.default with
                 | None -> []
                 | Some m -> [Expr.pretty_print m]
             in
-            Pp.(branch [text "?"; spanned p.name] (typ @ expr))
+            Pp.(branch ([text "?"; spanned p.name] @ alias) default)
         | Extension p ->
             Pp.(branch [text "&.."; spanned p.name] [Type.pretty_print p.type_ident])
 end and Int: sig 
@@ -312,6 +268,7 @@ and Block: sig
         | Expr of Expr.t
         | Let of Let.t
         | Block of Block.t
+        | Using of Using.t
 
     type t = {
         range: Span.range;
@@ -329,11 +286,13 @@ end = struct
         | Expr of Expr.t
         | Let of Let.t
         | Block of Block.t
+        | Using of Using.t
 
     let pretty_print_stmt = function
         | Expr t -> Expr.pretty_print t
         | Let t -> Let.pretty_print t
         | Block t -> Block.pretty_print t
+        | Using u -> Using.pretty_print u
 
     type t = {
         range: Span.range;
@@ -501,7 +460,11 @@ end = struct
     | Match n -> n.range
 end
 and Module: sig
-    type entry = Let of Let.t | Using of Using.t | Module of Module.t | Typedef of Typedef.t
+    type entry = 
+        | Let of Let.t 
+        | Using of Using.t 
+        | Module of Module.t 
+        | Typedef of Typedef.t
 
     type t = {
         range: Span.range;
@@ -512,7 +475,11 @@ and Module: sig
 
     val pretty_print: t -> Pp.branch
 end = struct 
-    type entry = Let of Let.t | Using of Using.t | Module of Module.t | Typedef of Typedef.t
+    type entry = 
+        | Let of Let.t 
+        | Using of Using.t 
+        | Module of Module.t 
+        | Typedef of Typedef.t
 
     type t = {
         range: Span.range;

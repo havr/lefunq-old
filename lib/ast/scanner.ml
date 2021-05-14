@@ -40,8 +40,9 @@ let defs = [
         str "foreign");
     ((fun _ -> Sig), 
         str "sig");
+    (* TODO: rename to Using *)
     ((fun _ -> Import), 
-        str "import");
+        str "using");
     ((fun _ -> Let), 
         str "let");
     ((fun _ -> If), 
@@ -91,7 +92,7 @@ let defs = [
     ((fun _ -> Lambda), 
         char "\\");
     ((fun op -> Op op),
-        choice [str "%"; str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"; str "=="; str "!="]);
+        choice [str "++"; str "%"; str "+"; str "-"; str "*"; str "/"; str "$"; str "|>"; str ">"; str "<"; str "=="; str "!="]);
     ((fun s -> Ident s), 
         qualified_ident
     );

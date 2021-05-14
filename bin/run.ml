@@ -12,8 +12,13 @@ let run_node file =
 
 
 let main args = 
+    let config = Make.{
+        fs = Make.Fs.local;
+        packages = ["std", Sys.getenv_exn "LF_STDLIB"];
+        builtin = "std/base"
+    } in
     let tmp_file = Caml.Filename.concat (Caml.Filename.get_temp_dir_name ()) "out" in
-    begin match Make.make ~fs:Make.Fs.local args.src tmp_file with
+    begin match Make.make ~config args.src tmp_file with
     | Ok _ ->
         Stdio.print_endline tmp_file;
         run_node tmp_file

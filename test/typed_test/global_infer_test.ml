@@ -7,7 +7,7 @@ let module_of code =
     | Error e -> 
         Alcotest.fail (Common.Err.to_string e); (* TODO: proper error string *)
     | Ok stmts ->
-        Typed.root ~source: "" ~resolve_source: (fun _ -> raise Common.TODO) stmts
+        Typed.Infer_toplevel.root ~builtin: (Map.empty(module String)) ~source: "" ~resolve_source: (fun _ -> raise Common.TODO) stmts
 
 let split ~equals expect got =
     let expected_not_got = List.filter expect ~f: (fun e ->

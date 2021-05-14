@@ -31,19 +31,20 @@ end
 
 let pattern_checks accessor pattern = 
     let rec step accessor pattern =
+        let open Typed.Node.Match in
         match pattern with
-        | Typed.Match.Any -> Ctx.empty
-        | Typed.Match.Unit -> Ctx.empty
-        | Typed.Match.Str s -> Ctx.with_cond (equals_check accessor (Expr.str s)) 
-        | Typed.Match.Int i -> Ctx.with_cond (equals_check accessor (Expr.num i)) 
-        | Typed.Match.Param p -> Ctx.with_param p.scope_name accessor 
-        | Typed.Match.Tuple tup ->
+        | Any -> Ctx.empty
+        | Unit -> Ctx.empty
+        | Str s -> Ctx.with_cond (equals_check accessor (Expr.str s)) 
+        | Int i -> Ctx.with_cond (equals_check accessor (Expr.num i)) 
+        | Param p -> Ctx.with_param p.scope_name accessor 
+        | Tuple tup ->
             List.mapi tup ~f: (fun i elem -> 
                 let accessor = Expr.index (Expr.num_int i) accessor in
                 step accessor elem
             )
             |> Ctx.merge
-        | Typed.Match.List li ->
+        | List li ->
             let acc_check = Ctx.with_cond (equals_check (Expr.property "length" accessor) (Expr.num_int @@ List.length li.items)) in
             let items = List.mapi li.items ~f: (fun i elem -> 
                 let accessor = Expr.index (Expr.num_int i) accessor in
@@ -51,7 +52,8 @@ let pattern_checks accessor pattern =
             ) in
             let rest = match li.rest with
                 | None -> Ctx.empty 
-                | Some (Typed.Match.Param p) -> Ctx.with_param p.scope_name (ArrayUtils.slice ~start: (List.length li.items) accessor)                | _ -> (raise Common.Unreachable)
+                | Some (Param p) -> Ctx.with_param p.scope_name (ArrayUtils.slice ~start: (List.length li.items) accessor)                
+                | _ -> (raise Common.Unreachable)
             in Ctx.merge @@ [acc_check] @ items @ [rest]
     in let ctx = step accessor pattern in
     let cond = List.map ctx.conds ~f: Expr.parens

@@ -1,5 +1,6 @@
 open Base
 open Typed
+open Common
 
 let make_tempvar prefix = 
     let n = ref 0 in
@@ -11,7 +12,7 @@ let make_tempvar prefix =
 
 type arg = {
     pos: int;
-    expr: Expr.t;
+    expr: Node.Expr.t;
 }
 
 module Shape = struct 
@@ -27,8 +28,8 @@ module Shape = struct
         in 
         let shape' = from_arg [] Typed.Node.(Expr.typ Apply.(apply.fn)) in
         let labeled = List.mapi apply.args ~f: (fun i -> function
-            | Typed.Apply.PosArg {expr} -> (i, "", expr)
-            | Typed.Apply.NameArg {expr; name} -> (i, name.value, expr)
+            | Typed.Node.Apply.PosArg {expr} -> (i, "", expr)
+            | Typed.Node.Apply.NameArg {expr; name} -> (i, name.value, expr)
         ) in
         let inlineable = function
             | Typed.Node.Expr.Value _
@@ -77,7 +78,7 @@ let print_shape shape =
 module Instant = struct 
     type chunk = {
         args: arg list;
-        actions: [`Arg of int | `Erase | `Inline of (int * Typed.Expr.t)] list
+        actions: [`Arg of int | `Erase | `Inline of (int * Typed.Node.Expr.t)] list
     }
 
     let from_actions acts args =
@@ -109,7 +110,7 @@ module Rewrap = struct
     type t = {
         args: arg list;
         numParams: int;
-        actions: [`Arg of int | `Param of int | `Inline of Typed.Expr.t] list;
+        actions: [`Arg of int | `Param of int | `Inline of Typed.Node.Expr.t] list;
     }
 
     let from_actions actions' args = 
@@ -158,7 +159,7 @@ let apply app =
         | _ -> Some rewr
     in instant_opt, rewr_opt
 
-let convert  ~expr app accessor = 
+let convert ~expr app accessor = 
     let immediate ~tempvar ~arg_vars chunks target =
         let apply_fn target chunk = Ast_util.Apply.curried target @@ List.map Instant.(chunk.actions) ~f: (function
             | `Arg n -> Ast.Expr.Ident (Ast.Ident.make (Map.find_exn arg_vars n))

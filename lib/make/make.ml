@@ -51,13 +51,6 @@ type context = {
     typed: modu StringMap.t
 }
 
-(* let absolute_path curr_dir source = 
-    if String.is_prefix ~prefix: "./" source then
-        curr_dir ^ source
-    else if String.is_prefix ~prefix: "../" source then
-        curr_dir ^ source
-    else source *)
-
 let check_cycles history import =    
     match List.findi history ~f:(fun _ imp -> String.equal imp import) with
     | Some (idx, _) -> Some (List.take history (idx + 1))
@@ -72,16 +65,20 @@ type error =
 module Frontend = struct 
     type config = {
         fs: Fs.t;
+        packages: (string * string) list;
+        builtin: string;
     }
+    
     type result = {
         source: string;
-        root: Typed.Module.t
+        file_path: string;
+        root: Typed.Node.Module.t
     }
 
     type context = {
         config: config;
         callback: result -> unit;
-        mutable sources: Typed.Symbol.Module.t StringMap.t;
+        mutable sources: Typed.Resolved.Module.t StringMap.t;
         mutable errors: Common.Err.t list
     }
 
@@ -103,36 +100,56 @@ module Frontend = struct
             |> String.concat ~sep: "/" 
         in "/" ^ result
 
-    let source_path cwd source =
+    let absolute_path cwd source = 
         if String.is_prefix source ~prefix: "/" then
             source
+        else resolve_path (cwd ^ "/" ^ source)
+
+    let source_path pkgs cwd source =
+        let resolve_absolute abs = 
+            let found = List.find_map pkgs ~f: (fun (name, path) -> 
+                Common.log[name; path; abs];
+                if String.is_prefix abs ~prefix:path then (
+                    let pkg_relative = String.chop_prefix_exn abs ~prefix:path in
+                    Some (name ^ "/" ^ pkg_relative)
+                ) else None
+            ) in
+            match found with
+            | Some rel -> Some (rel, abs)
+            | None -> Some (abs, abs)
+        in
+
+        if String.is_prefix source ~prefix: "/" then
+            resolve_absolute source
         else if is_relative source then
-            (* TODO: realpath *)
-
-            resolve_path (cwd ^ "/" ^ source)
-            (*Core.Filename.realpath (cwd ^ source)*)
+            resolve_absolute (resolve_path (cwd ^ "/" ^ source))
         else 
-            (* TODO: resolve package name *)
-            resolve_path(cwd ^ "/" ^ source)
-
-    let ensure_extension str = 
-        if String.is_suffix ~suffix: ".lf" str 
-        then str
-        else str ^ ".lf"
+            List.find_map pkgs ~f: (fun (name, path) ->
+                if String.is_prefix source ~prefix: name then (
+                    Some (source, resolve_path @@ path ^ "/" ^ (String.chop_prefix_exn source ~prefix: name))
+                ) else
+                    None
+            ) 
 
     let resolve_source_file ~ctx import_stack source =
+        let ensure_extension str = 
+            if String.is_suffix ~suffix: ".lf" str 
+            then str
+            else str ^ ".lf"
+        in
         let cwd = match import_stack with
             | head :: _ -> Core.Filename.dirname head
             | [] -> ctx.config.fs.cwd ()
         in
-        let path = source_path cwd source in
-        let file_path = ensure_extension path in
-        let exists = Fs.(ctx.config.fs.exists) in
-        if exists file_path then Some file_path else (
-            let index_path = path ^ "/index.lf" in
-            if exists index_path then Some index_path else None
+        source_path ctx.config.packages cwd source |> Util.Option.flat_map (fun (rel, abs) ->
+            let with_ext = ensure_extension abs in
+            let exists = Fs.(ctx.config.fs.exists) in
+            if exists with_ext then Some (rel, with_ext) else (
+                (* TODO: join it properly: avoid foobar and foo//bar *)
+                let index = abs ^ "/index.lf" in
+                if exists index then Some (rel, index) else None
+            )
         )
-
 
     type abort_reason = [
         | `NotFound
@@ -141,6 +158,13 @@ module Frontend = struct
     ]
 
     let convert_typed_error file = function
+    | Typed.Errors.InternalError { message } ->
+        Common.Err.{
+            file; 
+            range = Span.empty_range;
+            msg = "Internal error: " ^ message;
+            context = None
+        }
     | Typed.Errors.UndeclaredIdentifier { given_name; range } ->
         Common.Err.{
             file; 
@@ -187,7 +211,7 @@ module Frontend = struct
         Common.Err.{
             file;
             range;
-            msg = "If type mismatch: " ^ (Typed.Type.to_string unexpected);
+            msg = "If condition expects Bool, but got: " ^ (Typed.Type.to_string unexpected);
             context = None
         }
     | Typed.Errors.BranchTypeMismatch { unexpected; expected; range } -> 
@@ -275,45 +299,52 @@ module Frontend = struct
             context = None
         }
 
-    let process ~ctx source =
-        let rec resolve_source import_stack source = 
-            match resolve_source_file ~ctx import_stack source with
-                | None -> Error Typed.Resolve.SourceNotFound
-                | Some file_name ->
-                    match check_cycles import_stack file_name with
-                    | Some loop -> 
-                        Error (Typed.Resolve.CyclicDependency loop)
+    let rec resolve_source ~builtin ~ctx import_stack source = 
+        match resolve_source_file ~ctx import_stack source with
+            | None -> Error Typed.Infer_using.SourceNotFound
+            | Some (rel, abs) ->
+                match check_cycles import_stack rel with
+                | Some loop -> 
+                    Error (Typed.Infer_using.CyclicDependency loop)
+                | None ->
+                    match Map.find ctx.sources rel with
+                    | Some r -> Ok (rel, Typed.Resolved.Module.(r.exposed))
                     | None ->
-                        match Map.find ctx.sources file_name with
-                        | Some r -> Ok (file_name, Typed.Symbol.Module.(r.exposed))
-                        | None ->
-                            match compile (file_name :: import_stack) file_name with
-                            | Error `NotFound -> Error Typed.Resolve.SourceNotFound
-                            | Error `SourceErrors -> Error Typed.Resolve.SourceError
-                            | Error _ -> Error Typed.Resolve.SourceNotFound
-                            | Ok resolved -> Ok (file_name, Typed.Symbol.Module.(resolved.exposed))
-        and compile import_stack file_name = 
-                match ctx.config.fs.read file_name with
-                | None -> Error `ReadError
-                | Some content ->
-                    match Ast.of_string ~file:file_name content with
-                    | Error error -> 
-                        ctx.errors <- error :: ctx.errors;
+                        match compile ~builtin ~ctx (rel :: import_stack) (rel, abs) with
+                        | Error `NotFound -> Error Typed.Infer_using.SourceNotFound
+                        | Error `SourceErrors -> Error Typed.Infer_using.SourceError
+                        | Error _ -> Error Typed.Infer_using.SourceNotFound
+                        | Ok resolved -> Ok (rel, Typed.Resolved.Module.(resolved.exposed))
+    and compile ~builtin ~ctx import_stack (rel, abs) = 
+            match ctx.config.fs.read abs with
+            | None -> Error `ReadError
+            | Some content ->
+                match Ast.of_string ~file:rel content with
+                | Error error -> 
+                    ctx.errors <- error :: ctx.errors;
+                    Error `SourceErrors
+                | Ok root -> 
+                    match Typed.Infer_toplevel.root ~builtin ~source:rel ~resolve_source: (resolve_source ~builtin ~ctx import_stack) root with
+                    | Error errors ->
+                        ctx.errors <- (List.map errors ~f: (convert_typed_error rel)) @ ctx.errors;
                         Error `SourceErrors
-                    | Ok root -> 
-                        match Typed.root ~source:file_name ~resolve_source: (resolve_source import_stack) root with
-                        | Error errors ->
-                            ctx.errors <- (List.map errors ~f: (convert_typed_error file_name)) @ ctx.errors;
-                            Error `SourceErrors
-                        | Ok modu ->
-                            let source_module = Typed.Symbol.Module.{id = Typed.Typed_common.Id.make file_name [] ""; exposed = modu.exposed} in
-                            ctx.sources <- Map.add_exn ctx.sources ~key: file_name ~data: source_module;
-                            ctx.callback {source=file_name; root = modu};
-                            Ok source_module
-                
-        in match resolve_source_file ~ctx [] source with
-            | None -> Error `NotFound
-            | Some file_name -> compile [file_name] file_name
+                    | Ok modu ->
+                        let source_module = Typed.Resolved.Module.{id = Typed.Id.make rel [] ""; exposed = modu.exposed} in
+                        ctx.sources <- Map.add_exn ctx.sources ~key: rel ~data: source_module;
+                        ctx.callback {source = rel; file_path = abs; root = modu};
+                        Ok source_module
+    let process ~builtin ~ctx source =
+        (* TODO: refactor? *)
+        let path = absolute_path (ctx.config.fs.cwd ()) source in
+        if ctx.config.fs.exists path 
+            then compile ~builtin ~ctx [path] (path, path)
+            else Error `NotFound
+
+    let map_error ~ctx entrypoint = function
+        | Ok v -> Ok v
+        | Error `NotFound -> Error (NotFound entrypoint)
+        | Error `ReadError -> Error ReadError
+        | Error `SourceErrors -> Error (SourceErrors (List.rev ctx.errors))
 
     let run ~config ~callback entrypoint =
         let ctx = {
@@ -322,11 +353,26 @@ module Frontend = struct
             sources = Map.empty(module String); 
             errors = []
         } in
-        match process ~ctx entrypoint with
-        | Error `NotFound -> Error (NotFound entrypoint)
-        | Error `ReadError -> Error ReadError
-        | Error `SourceErrors -> Error (SourceErrors (List.rev ctx.errors))
-        | Ok _ -> Ok ()
+        let process ~builtin name = 
+            match resolve_source_file ~ctx [] name with
+            | Some (rel, abs) ->
+                Common.log["process name"; name; rel; abs];
+                compile ~builtin ~ctx [rel] (rel, abs)
+                |> (map_error ~ctx name)
+                |> Result.map ~f: (fun m -> Typed.Resolved.Module.(m.exposed))
+            | None -> 
+                Common.log["process name"; name; "nf"];
+                Error (NotFound name)
+        in
+        let builtin = match config.builtin with
+            | "" -> Ok (Map.empty(module String))
+            | name -> process ~builtin: (Map.empty(module String)) name
+        in
+        match builtin with
+        | Ok builtin -> (
+            process ~builtin entrypoint 
+        )
+        | Error e -> Error e 
 end
 
 module JsBackend = struct 
@@ -342,20 +388,24 @@ module JsBackend = struct
         printer: Js.Ast.Printer.t;
     }
 
+(* TODO: need to bundle all node modules there *)
+
     let header main = {|
 (function (cache, modules) {
-    function require(name) { return cache[name] || get(name); }
+    function localRequire(name) { return cache[name] || get(name); }
     function get(name) {
         var exports = {}, module = {exports: exports};
         const register = modules[name];
         if (!register) {
             /*throw ("Module not found:" + name)*/
+            // TODO: ask for global node module
+            return require(name);
             return null;
         }
-        register.call(exports, {}, require, module, exports);
+        register.call(exports, {}, localRequire, module, exports);
         return (cache[name] = module.exports);
     }
-    var main = require("|} ^ main ^ {|");
+    var main = localRequire("|} ^ main ^ {|");
     return main.__esModule ? main.default : main;
 })({}, {
 |}
@@ -372,84 +422,6 @@ module JsBackend = struct
         Js.Ast.Printer.str (header main) printer;
         {config; printer}
 
-    let require_nodes ~foreign_bindings ~source root = 
-        let open Typed.Node in 
-        let x = ref 0 in
-        let convert_var_name _ = 
-            let name = "__" ^ (Int.to_string !x) in
-            x := !x + 1;
-            name
-        in
-        let collect_global_deps root = 
-            let order = ref [] in
-            let dups = ref (Set.empty(module String)) in
-            let add_dep ?name dep = 
-                let skip = (Set.mem !dups dep) || (String.is_empty dep) || (String.equal dep source) in
-                if not skip then (
-                    let n = match name with 
-                        | Some n -> n
-                        | None -> convert_var_name dep
-                    in
-                    order := (dep, n) :: !order; 
-                    dups := Set.add !dups dep
-                ) in
-            let rec block b = block_stmts Block.(b.stmts) 
-            and block_stmts = List.iter ~f:(function
-                | Stmt.Expr e -> expr e 
-                | Stmt.Block bs -> block bs
-                | Stmt.Let t -> block t.block
-            )
-
-            and expr = function
-                | Value _ -> ()
-                | Li li -> List.iter li.items ~f:expr
-                | Foreign _ ->
-                    (* TODO: check it earlier? *)
-                    add_dep ~name: (Js.Convert.foreign_require) (Option.value_exn foreign_bindings)
-                | Ident id -> 
-                    (match (id.qual.path @ [id.qual.name]) with
-                        | [] -> raise (Common.Unreachable)
-                        | res :: _ -> add_dep (Option.value_exn res.resolved).source
-                    )
-                | Apply app -> 
-                    expr app.fn;
-                    List.iter app.args ~f: (function 
-                        | PosArg{expr = e} -> expr e
-                        | NameArg{expr = e; _} -> expr e
-                    )
-                | Lambda lam -> block lam.block
-                | Match m -> (* TODO: visit pattern *)
-                    (expr m.expr);
-                    List.iter m.cases ~f: (fun case -> block_stmts case.stmts)
-                | Cond t -> 
-                    List.iter t.cases ~f: (fun {if_; then_} ->
-                        block if_;
-                        block then_;
-                    );
-                    Option.iter t.else_ ~f:block
-                | Tuple t -> List.iter t.exprs ~f:expr
-            in
-            let rec modu m = 
-                List.iter Module.(m.entries) ~f:(function
-                | Module.Binding b -> block b.block
-                | Module.Using im -> (match im.root with 
-                    | Using.Source {resolved; _} -> add_dep resolved; 
-                    | _ -> ());
-                | Module.Module m -> modu m
-                | Module.Typedef _ -> (raise Common.TODO)
-            ) 
-            in modu root; !order
-        in 
-        let deps = collect_global_deps root in
-        let call name args = Js.Ast.Apply.{
-            fn = Js.Ast.Expr.Ident (Js.Ast.Ident.{value=name});
-            args = args;
-        } in
-        let str value = Js.Ast.Str.{value} in
-        let require name = call "require" [Js.Ast.Expr.Str (str name)] in
-        let nodes = List.map deps ~f: (fun (name, var_name) -> 
-            Js.Ast.Const.expr var_name (Js.Ast.Expr.Apply (require name))) in
-        (nodes, deps)
 
     let write_bindings backend source content = 
         let open Js.Ast.Printer in
@@ -465,14 +437,14 @@ module JsBackend = struct
             write_bindings backend bindings_source content;
             Some bindings_source
         | None -> None) in
-        let (requires, mapping) = require_nodes ~foreign_bindings ~source node in
+        (* let (requires, mapping) = require_nodes ~foreign_bindings ~source node in
         let ctx = Js.Convert.{
             source=source;
             required_sources = Map.of_alist_exn(module String) mapping;
-        } in
-        let body = Js.Convert.root_module ~ctx node in
+        } in *)
+        let body = Js.Convert.root_module source foreign_bindings node in
         Js.Ast.Printer.str (module_header source) backend.printer;
-        Js.Ast.Prn.stmts (List.map requires ~f: (fun require -> Js.Ast.Block.Const require)) backend.printer;
+        (* Js.Ast.Prn.stmts (List.map requires ~f: (fun require -> Js.Ast.Block.Const require)) backend.printer; *)
         Js.Ast.Prn.stmts body backend.printer;
         Js.Ast.Printer.newline backend.printer;
         (* write_exposed backend node.exposed; *)
@@ -488,12 +460,27 @@ module JsBackend = struct
     let rollback backend = ignore backend
 end
 
-let make ~fs in_ out = 
-    let backend = JsBackend.start ~config: JsBackend.{fs} (Frontend.source_path (Fs.(fs.cwd) ()) in_) in 
-    match Frontend.run ~config: Frontend.{fs} ~callback: (fun {source; root} ->
-        let foreign_source = (Caml.Filename.remove_extension source) ^ ".js" in
-        let bindings = match Caml.Sys.file_exists foreign_source with
-            | true -> (match File.read foreign_source with 
+type config = {
+    fs: Fs.t;
+    packages: (string * string) list;
+    builtin: string;
+}
+
+let make ~config in_ out = 
+    let cwd = Fs.(config.fs.cwd) () in
+    (* TODO: resolve this mess (how to determine main module name before compilation start) *)
+    let absname = Frontend.absolute_path cwd in_ in
+    let backend = JsBackend.start ~config: JsBackend.{fs = config.fs} absname in 
+    let config = Frontend.{
+        fs = config.fs;
+        packages = config.packages;
+        builtin = config.builtin;
+    } in
+    match Frontend.run ~config ~callback: (fun {source; file_path; root} ->
+        (* TODO: what is the best names to call rel/abs source paths? *)
+        let foreign_source = (Caml.Filename.remove_extension file_path) ^ ".js" in
+        let bindings = match config.fs.exists foreign_source with
+            | true -> (match config.fs.read foreign_source with 
                 | Some contents -> Some (contents, foreign_source)
                 | None -> raise Unexpected
             )

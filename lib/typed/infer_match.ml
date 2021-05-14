@@ -1,6 +1,5 @@
 open Common
 open Base
-open Inferno
 
 module Coverage = struct 
     type t = 
@@ -161,11 +160,30 @@ let check_is_exhaustive matc =
     );
     !errors
 
+(* TODO: match, local using, conds *)
 let matc ~ctx ~expr ~block_stmts m =
     let open Node in
+    let rec resolve_pattern ~ctx = function
+        | Match.Unit -> Match.Unit
+        | Match.Any -> Match.Any
+        | Match.Tuple tup -> Match.Tuple (List.map tup ~f:(resolve_pattern ~ctx))
+        | Match.List li -> Match.List { 
+            items = List.map li.items ~f:(resolve_pattern ~ctx);
+            rest = Option.map li.rest ~f:(resolve_pattern ~ctx);
+            item_typ = Infer_ctx.(ctx.tempvar())
+        }
+        | Match.Str s -> Match.Str s
+        | Match.Int i -> Match.Int i
+        | Match.Param p -> (
+            let typ = ctx.tempvar() in
+            let id = Scope.add_local_binding ctx.scope p.given_name in
+            Infer_ctx.add_env ~ctx id (Type.make_scheme [] typ);
+            Match.Param {p with scope_name = id; typ}
+        )
+    in
     let must_unify expect_typ pattern = 
         let pattern_typ = Match.pattern_to_type pattern in
-        do_unify ~ctx expect_typ pattern_typ ~error: (
+        Infer_ctx.try_unify ~ctx expect_typ pattern_typ ~error: (
             Errors.PatternMismatch {expected = expect_typ; unexpected = pattern_typ; range = Span.empty_range}
         )
     in
@@ -190,28 +208,32 @@ let matc ~ctx ~expr ~block_stmts m =
     | _ -> true
     in
 
-    let typ = expr ~ctx Node.Match.(m.expr) in
+    let expr_node, typ = expr ~ctx Node.Match.(m.expr) in
     (* TODO: assert list types *)
-    let (result, patterns_are_ok) = List.fold m.cases ~init: (Type.Unknown, true) ~f: (fun (result, patterns_are_ok) case ->
-        let patterns_are_ok' = (unify_structs case.pattern) && patterns_are_ok in
-        (match (case.pattern, typ) with
+    let (result, patterns_are_ok), cases = List.fold_map m.cases ~init: (Type.Unknown, true) ~f: (fun (result, patterns_are_ok) case ->
+        let ctx = Infer_ctx.sub_local ctx in
+        let pattern = resolve_pattern ~ctx case.pattern in
+
+        let patterns_are_ok' = (unify_structs pattern) && patterns_are_ok in
+        (match (pattern, typ) with
         | Match.Any, _ -> ()
         | p, t -> 
             ignore @@ must_unify t p);
 
         (* TODO:  *)
-        let case_result = block_stmts ~ctx case.stmts in
+        let case_stmts, case_result = block_stmts ~ctx case.stmts in
+        Common.log["result"; Type.to_string result; Type.to_string case_result];
         let result' = match result with
         | Type.Unknown -> case_result
-        | t -> ignore @@ do_unify ~ctx result t ~error: (Errors.BranchTypeMismatch {
+        | t -> Infer_ctx.unify ~ctx result t ~error: (Errors.BranchTypeMismatch {
                 range = Stmt.range (List.last_exn case.stmts);
                 expected = result;
                 unexpected = t;
             });
             t
         in
-        (result', patterns_are_ok')
+        (result', patterns_are_ok'), Match.{stmts = case_stmts; pattern}
     ) in 
-    (if patterns_are_ok then ctx.errors <- ctx.errors @ (check_is_exhaustive m));
+    (if patterns_are_ok then List.iter (check_is_exhaustive m) ~f: (Infer_ctx.add_error ~ctx));
     (* TODO: check if all branches work properly *)
-    result
+    {m with expr = expr_node; cases}, result

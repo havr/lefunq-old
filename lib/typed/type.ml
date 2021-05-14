@@ -26,9 +26,19 @@ and t = Var of string
     | Tuple of (t list)
     | Unit
     | Unknown
-    | Invalid
+    (* | Invalid *)
 
 let make_name resolved def = {resolved; def}
+
+type tempvar_gen = unit -> t
+
+let make_tempvar_gen prefix = 
+    let idx = ref 0 in fun () ->
+        let result = Var (prefix ^ (Int.to_string !idx)) in
+        idx := !idx + 1;
+        result
+
+(* ====== *)
 
 type constr = (string)
 
@@ -51,7 +61,7 @@ in make_scheme constr (make_typ args)
 
 let rec to_string = function
 | Unit -> "()"
-| Invalid -> "<invalid>"
+(* | Invalid -> "<invalid>" *)
 | Unknown -> "<unknown>"
 | Var v -> v
 | Simple (v, params) -> 
@@ -117,12 +127,12 @@ let rec equals a b = match (a, b) with
 | (Lambda (NamedBlock ab, at), Lambda (NamedBlock bb, bt)) ->
     (List.equal phys_equal ab bb) && equals at bt
 | Unit, Unit -> true
-| Invalid, Invalid -> true
+(* | Invalid, Invalid -> true *)
 | _, _ -> false
 
 (* TODO: free_vars -> variables *)
 let rec free_vars = function
-| Invalid -> Set.empty (module String)
+(* | Invalid -> Set.empty (module String) *)
 | Unit -> Set.empty (module String)
 | Unknown -> Set.empty (module String)
 | Simple (_, args)  -> 
@@ -153,11 +163,6 @@ let scheme_equals a b =
     equals a.typ b.typ && lists_equal (String.compare) a.constr b.constr
 
 module Lambda = struct 
-    (* let rec unroll (arg, ret) =
-        match ret with
-        | Lambda ret -> arg :: (unroll ret)
-        | t -> [arg; t] *)
-
     let make_positional args = 
         let rec loop = function 
             | [] -> raise (Invalid_argument "making a lambda with no arguments")

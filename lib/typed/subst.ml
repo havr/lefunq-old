@@ -19,7 +19,7 @@ let concat base other =
         Map.set result ~key ~data)
 
 let rec apply substs = function
-| Type.Invalid  -> Type.Invalid
+(* | Type.Invalid  -> Type.Invalid *)
 | Type.Var v -> 
     Map.find substs v 
     |> Option.value ~default: (Type.Var v) 
@@ -56,21 +56,30 @@ let rec apply_to_pattern substs = function
         item_typ = apply substs li.item_typ;
     }
 
-(* let apply_to_scheme substs scheme = 
-    let without_scheme = Type.free_vars scheme |> Set.to_list |> List.fold ~init:substs ~f:Map.remove in
-    let typ' = apply without_scheme Type.(scheme.typ) in
-    Type.{ typ = typ'; constr } *)
+let apply_to_scheme substs scheme = 
+    let free = 
+        Type.(scheme.constr)
+        |> List.fold ~init:substs ~f:Map.remove in
+    let typ' = apply free Type.(scheme.typ) in
+    Type.{ scheme with typ = typ' }
 
 let rec apply_substs_to_params substs = 
+    let rec apply_shape = function
+        | Destruct.Name n -> Destruct.Name {n with typ = apply substs n.typ}
+        | Destruct.Tuple tu -> Destruct.Tuple (List.map tu ~f: apply_shape)
+        | Destruct.Unit -> Destruct.Unit
+    in
     List.map ~f: (fun p -> 
         let typ = apply substs Param.(p.typ) in
         let value = (match p.value with 
+            | Param.Positional {shape} -> Param.Positional {shape = apply_shape shape}
+            | Param.Named n -> Param.Named {n with shape = apply_shape n.shape}
             | Param.Optional p -> Param.Optional {p with 
                 default = Option.map ~f: (apply_to_expr substs) p.default
             }
-            | v -> v
+            | Param.Extension _ -> (raise Common.TODO)
         ) in
-        Param.{p with typ; value}
+        Param.{typ; value}
     )
 
 and apply_arg substs = function
@@ -86,9 +95,10 @@ and apply_to_expr substs expr =
             typ = (apply substs li.typ);
             items = List.map li.items ~f: (apply_to_expr substs)
         }
-    | Expr.Foreign n -> Expr.Foreign n (*Foreign.({ n with 
-            scheme = Option.map n.scheme ~f: (apply_to_scheme substs)
-        })*)
+    | Expr.Foreign n -> Expr.Foreign (Foreign.({ n with 
+            typ = apply substs n.typ;
+            (* scheme = Option.map n.scheme ~f: (apply_to_scheme substs) *)
+        }))
     | Expr.Value m -> Expr.Value ({
             m with typ = apply substs m.typ
         })
@@ -137,7 +147,8 @@ and apply_to_block_stmts substs stmts =
             result = apply substs b.result;
             params = apply_substs_to_params substs b.params;
             block = apply_to_block substs b.block
-        })
+        }
+        | Stmt.Using u -> Stmt.Using u)
 
 and apply_to_block substs b = {b with stmts = apply_to_block_stmts substs b.stmts}
 
@@ -186,3 +197,4 @@ let apply_to_error substs err =
     | CannotApplyWithLabel t -> CannotApplyWithLabel{t with lambda = apply substs t.lambda}
     | CannotApplyWithoutLabel t -> CannotApplyWithoutLabel {t with lambda = apply substs t.lambda}
     | NotModule t -> NotModule t
+    | InternalError i -> InternalError i

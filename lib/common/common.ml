@@ -125,6 +125,11 @@ module Util = struct
         let surround start fin str = start ^ str ^ fin
     end
     module Lists = struct 
+        let rec last = function
+            | [] -> (raise (Invalid_argument "calling 'last' on an empty list"))
+            | [only] -> only
+            | _ :: rest -> last rest
+
         let pick ~f list = 
             let rec pick' head = function
                 | [] -> None

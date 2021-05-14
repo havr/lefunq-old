@@ -1,29 +1,9 @@
 open Common
 open Base
 
-module Id = struct 
-    type t = {
-        source: string;
-        modules: string list;
-        name: string;
-    }
-    let to_string id = "\"%s\"%s.%s" %% [
-        id.source; 
-        (match id.modules with
-        | [] -> ""
-        | mods -> "." ^ (String.concat ~sep: "." mods));
-        id.name]
 
-    let empty = {source = ""; modules = []; name = ""}
 
-    let equals a b = String.equal a.source b.source
-        && (String.equal a.name b.name)
-        && (List.equal String.equal a.modules b.modules)
-
-    let make source modules name = {source; modules; name}
-end
-
-module Resolved = struct 
+module Resolved_name = struct 
     type t = {
         resolved: Id.t option;
         given: string
@@ -52,13 +32,13 @@ end
 
 module Qualified = struct 
     type t = {
-        name: Resolved.t;
-        path: Resolved.t list
+        name: Resolved_name.t;
+        path: Resolved_name.t list
     }
 
     let make name path = {name; path}
 
-    let just_name given resolved = make Resolved.{given; resolved} []
+    let just_name given resolved = make Resolved_name.{given; resolved} []
 
     let given_names q = (List.map q.path ~f:(fun n -> n.given)) @ [q.name.given] 
 
@@ -69,23 +49,18 @@ module Qualified = struct
         let name, path = String.split ~on:'.' name 
             |> Util.Lists.last_rest 
         in {
-            name = Resolved.make name None;
-            path = List.map path ~f: (fun name -> Resolved.make name None)
+            name = Resolved_name.make name None;
+            path = List.map path ~f: (fun name -> Resolved_name.make name None)
         }
 
     let to_string q = 
         (q.path @ [q.name]) 
-        |> List.map  ~f: Resolved.to_string
+        |> List.map  ~f: Resolved_name.to_string
         |> String.concat ~sep: "/"
     
     let append res qual = {qual with path = res :: qual.path}
 
-    let equal a b = (Resolved.equal a.name b.name) && (List.equal Resolved.equal a.path b.path)
+    let equal a b = (Resolved_name.equal a.name b.name) && (List.equal Resolved_name.equal a.path b.path)
 
-    let resolve_name id qual = {qual with name = Resolved.{qual.name with resolved = Some(id)}}
+    let resolve_name id qual = {qual with name = Resolved_name.{qual.name with resolved = Some(id)}}
 end
-(*
-
-let name = [`name, "foo"; (`name 10), 10] |> foo#bar
-Foo.bar &: name
-*)

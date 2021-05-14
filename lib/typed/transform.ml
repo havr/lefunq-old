@@ -21,6 +21,7 @@ let rec type_ident = function
             args = List.map args ~f:type_ident;
         }
     | AstNode.Type.Tuple {items} -> TyNode.TypeIdent.Tuple {items = items |> List.map ~f: type_ident}
+    | AstNode.Type.List li -> TyNode.TypeIdent.List (type_ident li)
     | AstNode.Type.Unit -> TyNode.TypeIdent.Unit
 
 let using u = 
@@ -41,52 +42,57 @@ let using u =
         | Rename rename -> [(Using.Only rename), []]
     in
     Using.{
-        root; names; resolved = []
+        range = Span.empty_range;
+        root;
+        names;
+        resolved = []
     }
 
 
-let make_name given scope = Param.{given; scope}
+(* let make_name given scope = Param.{given; scope} *)
 
 let ident id = 
     let range = Span.(id.range) in
     Ident.{
         typ = Type.Unknown;
         range = range;
+        scheme = None;
         qual = Qualified.from_string Span.(id.value);
     }
 
+let rec destruct sh = match sh with
+    | AstNode.Destruct.Name name -> TyNode.Destruct.Name (TyNode.Destruct.{given = name.value; scope = ""; typ = Type.Unknown})
+    | AstNode.Destruct.Tuple tuple -> TyNode.Destruct.Tuple (List.map tuple ~f: destruct)
+    | AstNode.Destruct.Unit -> TyNode.Destruct.Unit
+
 let param ~expr p = 
-    let rec shape = function
-    | AstNode.Param.Ident m -> 
-        TyNode.Param.Name (make_name m.value "")
-    | AstNode.Param.Tuple m -> (
-        match m with 
-        | [] -> TyNode.Param.Unit 
-        | s :: [] -> shape s
-        | tu -> Param.Tuple (List.map tu ~f:shape)
-    ) in
     match p with
     | AstNode.Param.Positional p -> TyNode.Param.{
-        value = Positional {pattern = shape p.shape};
-        type_ident = Option.map ~f:type_ident p.type_ident;
+        value = TyNode.Param.Positional {shape = destruct p.shape};
         typ = Type.Unknown;
     }
-    | AstNode.Param.Named p -> TyNode.Param.{
-        value = Named {name = name p.name.value p.name.value};
-        type_ident = Option.map ~f:type_ident p.type_ident;
-        typ = Type.Unknown;
-    }
+    | AstNode.Param.Named p -> 
+        let shape = match p.shape with
+            | None -> TyNode.Destruct.Name (TyNode.Destruct.{given = p.name.value; scope = ""; typ = Type.Unknown})
+            | Some shape -> destruct shape
+        in
+        TyNode.Param.{
+            value = TyNode.Param.Named {given = p.name; shape};
+            typ = Type.Unknown;
+        }
     | AstNode.Param.Optional p -> TyNode.Param.{
         value = Optional {
-            name = name p.name.value p.name.value;
-            default = Option.map ~f:expr p.expr
+            scope = "";
+            given = p.name;
+            alias = p.alias;
+            default = Option.map ~f:expr p.default
         };
-        type_ident = Option.map ~f:type_ident p.type_ident;
         typ = Type.Unknown;
     }
     | AstNode.Param.Extension p -> TyNode.Param.{
-        value = Extension {name = name p.name.value p.name.value};
-        type_ident = Some (type_ident p.type_ident);
+        value = Extension {
+            given = p.name
+        };
         typ = Type.Unknown;
     }
 
@@ -119,6 +125,7 @@ and arg = function
 and value = function
     | Ast.Node.Value.Foreign f -> Expr.Foreign Foreign.{
         typ = Type.Unknown;
+        scheme = Type.make_scheme [] Type.Unknown;
         type_ident = type_ident f.typ;
         range = f.name.range;
         name = f.name.value;
@@ -212,6 +219,7 @@ and block_stmt = function
     | AstNode.Block.Expr e -> Stmt.Expr (expr e)
     | AstNode.Block.Block b -> Stmt.Block (block b)
     | AstNode.Block.Let t -> Stmt.Let (binding t)
+    | AstNode.Block.Using t -> Stmt.Using (using t)
 
 and block b = Block.{stmts = List.map ~f:block_stmt b.stmts; range = b.range}
 

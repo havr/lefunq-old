@@ -5,6 +5,21 @@ open Typed_infer_helper
 let foreign name = Type.make_name (Qualified.just_name name None) Type.Foreign
 
 let tests = [
+    "foreign unit", `Quick, test 
+        ~code: {|
+            type MyType n = foreign
+
+            let main = foreign "foreign" (MyType -> ())
+        |}
+        ~expect: (Success {
+            asserts = [
+                assert_let "main" (Type.make_scheme [] (Type.Lambda.make_positional [
+                    Type.Simple (foreign "MyType", []); 
+                    Type.Unit; 
+                ]))
+            ]
+        });
+
     "foreign", `Quick, test 
         ~code: {|
             type MyType n = foreign

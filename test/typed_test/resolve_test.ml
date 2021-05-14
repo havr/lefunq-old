@@ -1,4 +1,7 @@
-open Common
+(* TODO: remove, there is no dedicated resolve anymore *)
+(* Move shadowing check somewhere else *)
+
+(* open Common
 open Helper
 open Typed
 
@@ -14,7 +17,8 @@ let shadowing () =
     ] in
     let input_block = (Block.{stmts=input; range = Span.empty_range}) in
     let global = Resolver.Scope.root "" in
-    let ctx = Resolve.Ctx.make (Resolver.Scope.toplevel global) in
+    let ctx = Resolve.Ctx.make ~resolve_source: (fun _ -> (raise Common.Unreachable)) 
+        (Resolver.Scope.toplevel global) in
     let resolved = Resolve.block ctx input_block in
     let expect = Block.{
         range = Span.empty_range;
@@ -27,4 +31,4 @@ let shadowing () =
 
 let tests = [
     "shadowing", `Quick, shadowing
-]
+] *)

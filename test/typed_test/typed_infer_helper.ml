@@ -55,21 +55,21 @@ let assert_errors expected got =
       if List.length results > 0 then
         Alcotest.fail (String.concat ~sep: "\n" results)
     end;
-    assert_errors errors Typed.Inferno.(ctx.errors)
+    assert_errors errors Typed.Infer_ctx.(!(ctx.errors))
 
 let rec find_toplevel_let path modu_stmts =
     match path, modu_stmts with
     | [], _ -> None
     | name :: [], entries -> 
         (List.find_map entries ~f:(function
-        | Typed.Module.Binding t when String.equal t.given_name name -> Some t 
+        | Node.Module.Binding t when String.equal t.given_name name -> Some t 
         | _ -> None
         ) |> Option.map ~f: (fun t -> (t, [])))
     | name :: rest, entries -> (
         let rec iter = function 
-            | (Typed.Module.Module m) :: _ when String.equal m.given_name name -> 
+            | (Node.Module.Module m) :: _ when String.equal m.given_name name -> 
                 find_toplevel_let rest m.entries
-            | (Typed.Module.Binding b) :: _ when String.equal b.given_name name -> 
+            | (Node.Module.Binding b) :: _ when String.equal b.given_name name -> 
                 Some (b, rest)
             | _ :: rest -> iter rest
             | [] -> None
@@ -80,20 +80,21 @@ let find_let_in_stmts path stmts =
     let rec find_in_stmts path stmts = List.find_map ~f: (find_in_stmt path) stmts
     and find_in_stmt path block =
         match (block, path) with
-        | Typed.Stmt.Let t, n :: [] -> (match String.equal t.given_name n with
+        | Node.Stmt.Using _, _ -> None
+        | Node.Stmt.Let t, n :: [] -> (match String.equal t.given_name n with
             | true -> Some t
             | false -> (List.find_map t.block.stmts ~f: (find_in_stmt path))
         )
-        | Typed.Stmt.Let t, n :: rest -> (match String.equal t.given_name n with
+        | Node.Stmt.Let t, n :: rest -> (match String.equal t.given_name n with
             | true -> (List.find_map t.block.stmts ~f: (find_in_stmt rest))
             | false -> None
         )
-        | Typed.Stmt.Let _, [] -> None 
-        | Typed.Stmt.Block b, path -> find_in_stmts path (b.stmts)
-        | Typed.Stmt.Expr e, path -> find_in_expr path e
+        | Node.Stmt.Let _, [] -> None 
+        | Node.Stmt.Block b, path -> find_in_stmts path (b.stmts)
+        | Node.Stmt.Expr e, path -> find_in_expr path e
     and find_in_arg path = function
-        | Typed.Apply.PosArg {expr} -> find_in_expr path expr
-        | Typed.Apply.NameArg {expr; _} -> find_in_expr path expr
+        | Node.Apply.PosArg {expr} -> find_in_expr path expr
+        | Node.Apply.NameArg {expr; _} -> find_in_expr path expr
     and find_in_expr path expr = 
         match expr with
         | Value _ -> None 
@@ -123,22 +124,23 @@ let find_let_in_stmts path stmts =
 
 let find_ident name stmts =
     let rec find_in_stmts = List.find_map ~f: (function
-        | Typed.Stmt.Let _ -> None 
-        | Typed.Stmt.Block b -> find_in_stmts (b.stmts)
-        | Typed.Stmt.Expr e -> find_in_expr e
+        | Node.Stmt.Using _ -> None
+        | Node.Stmt.Let _ -> None 
+        | Node.Stmt.Block b -> find_in_stmts (b.stmts)
+        | Node.Stmt.Expr e -> find_in_expr e
     )
     and find_in_pattern = function
-        | Typed.Match.Param p when String.equal p.given_name name -> Some p.typ
-        | Typed.Match.Tuple t -> List.find_map t ~f: find_in_pattern
-        | Typed.Match.List li -> (match List.find_map li.items ~f: find_in_pattern with
+        | Node.Match.Param p when String.equal p.given_name name -> Some p.typ
+        | Node.Match.Tuple t -> List.find_map t ~f: find_in_pattern
+        | Node.Match.List li -> (match List.find_map li.items ~f: find_in_pattern with
             | Some m -> Some m
             | None -> Option.find_map li.rest ~f: find_in_pattern
         )
         | _ -> None
 
     and find_in_arg = function
-        | Typed.Apply.PosArg {expr} -> find_in_expr expr
-        | Typed.Apply.NameArg {expr; _} -> find_in_expr expr
+        | Node.Apply.PosArg {expr} -> find_in_expr expr
+        | Node.Apply.NameArg {expr; _} -> find_in_expr expr
 
     and find_in_expr = function
         | Value _ -> None 
@@ -202,7 +204,7 @@ let assert_ident str_path typ entries =
     match find_let rest' entries with
     | None -> Alcotest.fail ("let-binding containing " ^ str_path ^ " not found")
     | Some l ->
-        match find_ident name Let.(l.block.stmts) with
+        match find_ident name Node.Let.(l.block.stmts) with
         | None -> Alcotest.fail ("ident " ^ str_path ^ " not found")
         | Some result_typ -> 
             Alcotest.(check(module String))
@@ -210,32 +212,17 @@ let assert_ident str_path typ entries =
                 (Type.to_string typ) 
                 (Type.to_string result_typ)
 
-    (* let path = String.split ~on: '.' str_path in
-    let result = (match find_toplevel_let path stmts with
-    | None -> None
-    | Some (b, []) -> Alcotest.fail (str_path ^ "points to a binding, not ident")
-    | Some (b, rest) -> 
-        let name, rest' = trunc_last rest in
-        (match rest' with
-        | [] -> Some b
-        | rest' -> find_let_in_stmts rest' b.block.stmts)
-            |> Option.find_map ~f:(fun t -> find_ident name Let.(t.block.stmts))
-    ) in
-    (match result with
-    | Some typ -> 
-    |> ignore *)
-
 type test_result = Success of {
-    asserts: (Module.entry list -> unit) list
+    asserts: (Node.Module.entry list -> unit) list
 } | Failure of {
     errors: (Errors.t list)
 }
 
 let test ~code ~expect () = 
-    match Ast.of_string ~file:"" code with
+    match Ast.of_string ~file:"test" code with
     | Error e -> Alcotest.fail (Common.Err.to_string e)
     | Ok ast -> 
-        let result = root ~source: "" ~resolve_source: (fun _ -> raise Common.Unexpected) ast in 
+        let result = Typed.Infer_toplevel.root ~builtin: (Map.empty(module String)) ~source: "test" ~resolve_source: (fun _ -> raise Common.Unexpected) ast in 
         match (expect, result) with
         | (Success {asserts}, Ok ast) -> 
             List.iter asserts ~f: (fun asser -> asser ast.entries)

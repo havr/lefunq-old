@@ -6,6 +6,20 @@ open Typed_common
     - move pp/stuff out
     - add typed / spanned annotations everywhere
 *)
+module Using = struct 
+    type import = Wildcard | Only of (string Span.t)
+    type root = Source of {
+        name: string Span.t;
+        resolved: string
+    } | Local of string Span.t
+
+    type t = {
+        range: Span.range;
+        root: root;
+        names: (import * string Span.t list) list;
+        resolved: (string * Resolved.Module.exposed) list;
+    }
+end
 module TypeIdent = struct 
     type arg = {label: string; optional: bool; typ: t}
     and t = Simple of {
@@ -20,9 +34,8 @@ module TypeIdent = struct
         arg: arg;
         result: t;
     } 
-    | Tuple of {
-        items: t list;
-    }
+    | Tuple of { items: t list; }
+    | List of t
     | Unit
 end
 
@@ -34,6 +47,16 @@ module Typedef = struct
         params: param list;
         def: Type.def;
     }
+end
+
+module Destruct = struct 
+    type name = {given: string; scope: string; typ: Type.t}
+
+    type shape = 
+        | Unit
+        | Name of name
+        | Tuple of shape list
+
 end
 
 module rec Cond: sig 
@@ -61,61 +84,31 @@ end = struct
     }
 end
 and Param: sig 
-    type name = {given: string; scope: string}
-
-    type pattern = 
-    | Unit
-    | Tuple of pattern list 
-    | Name of name
-
-    type param =
-        | Positional of {pattern: pattern}
-        | Named of {name: name}
-        | Optional of {name: name; default: Expr.t option}
-        | Extension of {name: name}
+    type value =
+        | Positional of {shape: Destruct.shape}
+        | Named of {given: string Span.t; shape: Destruct.shape}
+        | Optional of {given: string Span.t; scope: string; alias: string Span.t option; default: Expr.t option}
+        | Extension of {given: string Span.t}
 
     type t = {
-        type_ident: TypeIdent.t option;
         typ: Type.t;
-        value: param
+        value: value 
     }
 
-    val names: t -> name list
+    (* val names: t -> name list *)
     val equals: t -> t -> bool
-    val name: string -> string -> name
+    (* val name: string -> string -> name *)
 end = struct 
-    type name = {given: string; scope: string}
-
-    let name given scope = {given; scope}
-
-    type pattern = 
-    | Unit
-    | Tuple of pattern list 
-    | Name of name
-
-    type param =
-        | Positional of {pattern: pattern}
-        | Named of {name: name}
-        | Optional of {name: name; default: Expr.t option}
-        | Extension of {name: name}
+    type value =
+        | Positional of {shape: Destruct.shape}
+        | Named of {given: string Span.t; shape: Destruct.shape}
+        | Optional of {given: string Span.t; scope: string; alias: string Span.t option; default: Expr.t option}
+        | Extension of {given: string Span.t}
 
     type t = {
-        type_ident: TypeIdent.t option;
         typ: Type.t;
-        value: param
+        value: value 
     }
-
-    let names p = 
-        let rec pattern_names = function
-            | Tuple tu -> List.map tu ~f:pattern_names |> List.concat
-            | Name n -> [n]
-            | Unit -> []
-            in
-        match p.value with
-        | Positional {pattern} -> pattern_names pattern
-        | Named {name} -> [name]
-        | Optional {name; _} -> [name]
-        | Extension {name} -> [name]
 
     let equals a b = phys_equal a b
 end
@@ -169,6 +162,7 @@ and Foreign: sig
         range: Span.range;
         name: string;
         typ: Type.t;
+        scheme: Type.scheme;
     }
 end = struct 
     type t = {
@@ -176,12 +170,14 @@ end = struct
         range: Span.range;
         name: string;
         typ: Type.t;
+        scheme: Type.scheme;
     }
 
 end
 and Ident: sig 
     type t = {
         typ: Type.t;
+        scheme: Type.scheme option;
         range: Span.range;
         qual: Qualified.t;
         (* scheme: Type.scheme option; *)
@@ -191,6 +187,7 @@ and Ident: sig
 end = struct 
     type t = {
         typ: Type.t;
+        scheme: Type.scheme option;
         range: Span.range;
         qual: Qualified.t;
     }
@@ -231,16 +228,25 @@ end
 
 and Stmt: sig 
     (* todo: let stmt and block stmt*)
-    type t = Expr of Expr.t | Let of Let.t | Block of Block.t
+    type t = 
+        Expr of Expr.t 
+        | Let of Let.t 
+        | Block of Block.t
+        | Using of Using.t
 
     val range: t -> Span.range
 end = struct 
-    type t = Expr of Expr.t | Let of Let.t | Block of Block.t
+    type t = 
+        Expr of Expr.t 
+        | Let of Let.t 
+        | Block of Block.t
+        | Using of Using.t
 
     let range = function
         | Expr e -> Expr.range e
         | Let l -> l.range
         | Block b -> b.range
+        | Using u -> u.range
 end
 (* TODO: remove *)
 and Block: sig 
@@ -250,7 +256,7 @@ and Block: sig
 end = struct 
     type t = {stmts: Stmt.t list; range: Span.range}
 
-    let last_stmt_range _ = (raise Common.TODO) 
+    let last_stmt_range b = Stmt.range (List.hd_exn b.stmts)
 end
 and Tuple: sig 
     type t = {
@@ -413,22 +419,10 @@ end = struct
         | Match ma -> ma.typ
 end
 
-module Using = struct 
-    type import = Wildcard | Only of (string Span.t)
-    type root = Source of {
-        name: string Span.t;
-        resolved: string
-    } | Local of string Span.t
-
-    type t = {
-        root: root;
-        names: (import * string Span.t list) list;
-        resolved: (string * Symbol.Module.exposed) list;
-    }
-end
 
 module Module = struct
-    type entry = Binding of Let.t 
+    type entry = 
+        | Binding of Let.t 
         | Using of Using.t 
         | Module of t
         | Typedef of Typedef.t
@@ -436,7 +430,7 @@ module Module = struct
         given_name: string;
         scope_name: string;
         entries: entry list;
-        exposed: Symbol.Module.exposed StringMap.t;
+        exposed: Resolved.Module.exposed StringMap.t;
     }
 end
 
@@ -445,6 +439,12 @@ module Print_node = struct
 
     (* let typed ~fn n = 
         text ((Span.range_str n.range) ^ ":" ^ (Type.to_string n.typ) ^ "#" ^ () *)
+
+    let rec destruct shape = 
+        match shape with
+        | Destruct.Unit -> branch [text "()"] []
+        | Destruct.Name n -> branch [text n.given; text n.scope; text @@ Type.to_string n.typ] []
+        | Destruct.Tuple t -> branch [text "tuple"] (List.map t ~f: destruct)
 
     let typedef n = 
         let def_str = match Typedef.(n.def) with
@@ -458,7 +458,7 @@ module Print_node = struct
             Pp.(branch [text "VAR"; spanned v.given] [])
         | TypeIdent.Simple t -> 
             let qual_name = t.name.resolved.path @ [t.name.resolved.name]
-            |> List.map ~f: (Resolved.to_string)
+            |> List.map ~f: (Resolved_name.to_string)
             |> String.concat ~sep: "/" in
             Pp.(branch [text "TYPE"; text qual_name] (List.map ~f: type_ident t.args))
         | TypeIdent.Lambda {arg; result} -> 
@@ -467,6 +467,7 @@ module Print_node = struct
             ) else [] in
             Pp.(branch [text "LAMBDA"] (arg_node @ [type_ident arg.typ; type_ident result]))
         | TypeIdent.Tuple t -> Pp.(branch [text "TUPLE"] (List.map t.items ~f: type_ident))
+        | TypeIdent.List li -> Pp.(branch [text "list"] [type_ident li])
         | TypeIdent.Unit -> Pp.(branch [text "()"] [])
 
     let rec modu n = 
@@ -478,13 +479,17 @@ module Print_node = struct
         ) in
         Pp.(branch [text "MODULE"; text n.given_name; text n.scope_name] entries)
     and using n = 
-        let resolved = (fun Symbol.Module.{typedef; modu; binding} ->
+        let resolved = (fun Resolved.Module.{typedef; modu; binding} ->
             Option.map typedef ~f:(fun _ -> branch [text "typedef"] [])
             :: Option.map modu ~f:(fun m -> branch [text "module"; text (Id.to_string m.id)] [])
-            :: Option.map binding ~f:(fun m -> branch [
-                text "binding";
-                text (Id.to_string m.id);
-            ] [])
+            :: Option.map binding ~f:(fun m -> 
+                let id = Resolved.Binding.(match m with
+                    | Local loc -> loc 
+                    | Global g -> (Id.to_string g.id) ^ " " ^ (Type.scheme_to_string g.scheme)) in
+                branch [
+                    text "binding";
+                    text id;
+                ] [])
             :: []
             |> List.filter ~f: (Option.is_some)
             |> List.map ~f: (fun op -> Option.value_exn op)
@@ -570,6 +575,7 @@ module Print_node = struct
         | Block b -> block b
         | Let t -> let' t
         | Expr e -> expr e
+        | Using u -> using u
 
     and let' n = 
         let sigt = Option.map n.sigt ~f: (fun sigt -> 
@@ -589,7 +595,7 @@ module Print_node = struct
 
     and ident n = 
         let resolved r = 
-            let abs = match Resolved.(r.resolved) with
+            let abs = match Resolved_name.(r.resolved) with
             | None -> "<unresolved>"
             | Some m -> Id.to_string m
             in r.given ^ "(" ^ abs ^ ")"
@@ -635,23 +641,19 @@ module Print_node = struct
         branch [text "COND"] (cases @ else_)
 
     and param p = 
-        let open Param in 
-        let format_name n = Param.(n.given) ^ "(" ^ n.scope ^ ")" in
-        let rec param_pattern = function
-            | Unit -> branch [text "()"] []
-            | Name name -> branch [text (format_name name)] []
-            | Tuple t -> branch [text "TUPLE"] (t |> List.map ~f: param_pattern)
-        in
-        let typ = Param.(p.typ) |> Type.to_string |> text in
+        let typ = text @@ Type.to_string @@ Param.(p.typ) in
         match Param.(p.value) with
-        | Param.Positional {pattern} -> branch [text "POS"; typ] [param_pattern pattern]
-        | Param.Named {name} -> branch [text "NAMED"; text (format_name name); typ] []
-        | Param.Optional {name; default} -> 
+        | Param.Positional {shape} -> branch [text "positional"; typ] [destruct shape]
+        | Param.Named {given; shape} -> branch [text "name"; spanned given; typ] [destruct shape]
+        | Param.Optional {given; scope; alias; default} -> 
+            let alias = match alias with
+            | None -> []
+            | Some a -> Pp.[text "as"; spanned a]
+            in
             let default = match default with
             | None -> []
             | Some e -> [expr e]
-            in
-            branch [text "OPT"; text (format_name name); typ] (default @ [])
-        | Param.Extension {name} -> 
-            branch [text "EXT"; text (format_name name); typ] []
+            in branch ([text "optional"; spanned given; text scope; typ] @ alias) default
+        | Param.Extension {given} -> 
+            branch [text "ext"; spanned given; typ] []
 end

@@ -9,6 +9,12 @@ let args =
     {src = src; dst = dst}
 
 let main args = 
-    match Make.make ~fs:Make.Fs.local args.src args.dst with
+    let config = Make.{
+        fs = Make.Fs.local;
+        packages = ["std", Sys.getenv_exn "LF_STDLIB"];
+        builtin = "std/base"
+    } in
+
+    match Make.make ~config:config args.src args.dst with
     | Ok _ -> ()
     | Error e -> Cli_err.print e

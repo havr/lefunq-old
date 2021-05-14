@@ -1,6 +1,5 @@
 open Base
-
-let foreign_require = "__foreign" (* TODO: proper names *)
+open Convert_common
 
 let js_operators = ["+"; "-"; "*"; "/"; ">"; "<"; "=="; "!="; "%"]
 
@@ -24,10 +23,18 @@ let get_precedence op =
 
 (* TOOD: module operator-related stuff into a submodule *)
 let operator_mappings = [
+    '<', "$less";
+    '+', "$add";
+    '-', "$sub";
+    '*', "$mul";
+    '/', "$div";
     '$', "$dollar";
     '|', "$pipe";
-    '>', "$more"
+    '>', "$more";
+    '=', "$eq"
 ]
+
+module Tn = Typed.Node
 
 let operators = operator_mappings |> List.map ~f:(fun (m, _) -> m)
 
@@ -46,7 +53,7 @@ let map_operator op = List.fold (String.to_list op) ~init: "" ~f: (fun result ch
 
 let ident_value name = 
     if is_operator name then map_operator name else 
-        List.fold ["'", "$prime"; "!", "$unsafe"] ~init: name ~f: (fun accum (str, sub) -> 
+        List.fold ["'", "$prime"; "!", "$unsafe"; "=", "$o_O"] ~init: name ~f: (fun accum (str, sub) -> 
             String.substr_replace_all accum ~pattern: str ~with_: sub)
 
 module Dsl = struct 
@@ -61,48 +68,40 @@ type ctx = {
     required_sources: string StringMap.t
 }
 
-
-let resolve_ident ~ctx = function
-    | [] -> raise (Common.Unreachable)
-    | head :: rest -> 
-        let abs = Option.value_exn Typed.Typed_common.Resolved.(head.resolved) in
-        let head_part = (match abs.source with
-            | "" -> ident_value abs.name
-            | source -> (match String.equal source ctx.source with
-                | true -> ident_value abs.name
-                | false -> 
-                    let src = Map.find_exn ctx.required_sources source in
-                    (match abs.name with 
-                        | "" -> src
-                        | _ -> src ^ "." ^ (ident_value head.given)
-                    ))
-        ) in
-        (head_part :: (List.map rest ~f: (fun r -> ident_value r.given)) 
-            |> String.concat ~sep:".")
+let resolve_ident ~ctx name = 
+    match Typed.Id.(name.source) with
+    | "" -> ident_value (name.name)
+    | src ->
+        let reqname = if (String.equal src ctx.source) then "" else (Map.find_exn ctx.required_sources src) ^ "." in
+        let mods = match name.modules with
+            | [] -> ""
+            | modules -> (String.concat ~sep:"." modules) ^ "." in
+        let name = name.name in
+        reqname ^ mods ^ (ident_value name)
 
 let ident ~ctx n = 
     let id = Option.value_exn ~message: 
-        Typed.Ident.("No resolution for:" ^ (Typed.Typed_common.Qualified.given n.qual)) n.qual.name.resolved in
-    (*TODO: epic kludge. introduce foreigns asap  *)
-    if String.equal id.name "println" then begin 
-        Ast.Ident.{value = ident_value "println"}
-    end
-    else
-    Ast.Ident.{value = (resolve_ident ~ctx @@ n.qual.path @ [n.qual.name])}
+        Tn.Ident.("No resolution for:" ^ (Typed.Typed_common.Qualified.given n.qual)) n.qual.name.resolved in
+    Ast.Ident.{ value = resolve_ident ~ctx id }
 
 let basic b =
-    if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.str 
+    if Typed.Type.equals Tn.Value.(b.typ) Typed.Base_types.str 
         then Ast.Expr.Str(Ast.Str.{value = b.value})
-    else if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.int 
+    else if Typed.Type.equals Tn.Value.(b.typ) Typed.Base_types.int 
         then Ast.Expr.Num(Ast.Num.{value = b.value})
-    else if Typed.Type.equals Typed.Value.(b.typ) Typed.Base_types.unit 
+    else if Typed.Type.equals Tn.Value.(b.typ) Typed.Base_types.unit 
         then Ast.Expr.Void
     else raise @@ Invalid_argument ("unexpected basic type: " ^ (Typed.Type.to_string b.typ) ^ "(has value: " ^ b.value ^ ")")
 
+let exports names = 
+    Ast.Object.{
+        entries = List.map names ~f: (fun name -> Ast.Object.Pun name)
+    }
 
 let rec apply ~ctx n = begin
-    match Typed.Apply.(n.fn) with 
-    | Typed.Expr.Ident m -> 
+    let open Typed.Node in
+    match Apply.(n.fn) with 
+    | Expr.Ident m -> 
         (* TODO: !!FQN like!! import.value *)
         let local_name = (Option.value_exn m.qual.name.resolved).name in
         if not @@ is_js_operator local_name then
@@ -126,38 +125,41 @@ let rec apply ~ctx n = begin
     | fn -> 
         Convert_apply.convert ~expr: (expr ~ctx) n (expr ~ctx fn)
 
-end and expr ~ctx  = function
-    | Typed.Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (expr ~ctx))
-    | Typed.Expr.Value m -> basic m
-    | Typed.Expr.Ident m -> Ast.Expr.Ident (ident ~ctx m)
-    | Typed.Expr.Apply m -> apply ~ctx m
-    | Typed.Expr.Lambda m -> lambda ~ctx m
-    | Typed.Expr.Match m -> 
+end and expr ~ctx n = 
+    let open Typed.Node in
+    match n with
+    | Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (expr ~ctx))
+    | Expr.Value m -> basic m
+    | Expr.Ident m -> Ast.Expr.Ident (ident ~ctx m)
+    | Expr.Apply m -> apply ~ctx m
+    | Expr.Lambda m -> lambda ~ctx m
+    | Expr.Match m -> 
         let stmt_to_expr = function
         | Ast.Block.Expr expr -> expr
         | stmt -> Ast.Expr.Block (Ast.Block.{stmts=[stmt]})
         in
         let cond = Convert_match.match' 
-            ~stmts: (fun stmts -> List.map stmts ~f: (block_stmt ~ctx))
+            ~stmts: (block_stmts ~ctx)
             ~map_return: (fun stmt -> Ast.Block.Return (Ast.Return.{expr = stmt_to_expr stmt}))
             (Ast_util.Expr.ident "__TODO")
             m.cases
         in
         Ast_util.Lambdas.scoped ["__TODO", expr ~ctx m.expr] [Ast.Block.Cond cond]
-    | Typed.Expr.Cond m -> cond ~ctx m
-    | Typed.Expr.Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (expr ~ctx))
-    | Typed.Expr.Foreign f -> Ast.Expr.Ident Ast.Ident.{value = foreign_require ^ "." ^ f.name}
+    | Cond m -> cond ~ctx m
+    | Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (expr ~ctx))
+    | Foreign f -> Ast.Expr.Ident Ast.Ident.{value = foreign_require ^ "." ^ f.name}
 and cond ~ctx n = 
+    let open Typed.Node in
     let cond_expr = function 
-        | (Typed.Stmt.Expr e) :: [] -> expr ~ctx e 
+        | (Stmt.Expr e) :: [] -> expr ~ctx e 
         | b -> Block (block ~ctx b)
     in
-    let conds = Typed.Cond.(n.cases) |> List.map ~f:(fun Typed.Cond.{if_; then_} ->
+    let conds = Cond.(n.cases) |> List.map ~f:(fun Cond.{if_; then_} ->
         let if_ = cond_expr if_.stmts in
         let then_ = block ~ctx then_.stmts in
         Ast.Cond.{if_ = if_; then_ = then_.stmts}
     ) in let cond_block = Ast.Block.Cond Ast.Cond.{
-        conds=conds; else_ = n.else_ |> Option.map ~f: (fun m  -> Typed.Block.(block ~ctx m.stmts).stmts)
+        conds=conds; else_ = n.else_ |> Option.map ~f: (fun m  -> Block.(block ~ctx m.stmts).stmts)
     }
     in Ast.Expr.Block(Ast.Block.{stmts=[cond_block]})
 
@@ -175,146 +177,138 @@ and lambda_like ~ctx params bl =
         ) in
         let null_check = Ast.Expr.Binary (Ast.Binary.make "==" (Ast.Expr.Ident (Ast.Ident.make v)) (Ast.Expr.Ident (Ast.Ident.make "null"))) in
         let cond = Ast.Expr.Ternary (Ast.Ternary.make null_check default present) in
-        let const = Ast.Block.Const (Ast.Const.expr name cond) in
+        let const = [Ast.Const.expr name cond] in
         (const, v)
     in
     match params with
     | [] -> raise (Invalid_argument "lambda without arguments")
     | params -> 
-        (* lambda params -> signature, defaults *)
-        let rec destruct_tuple acc pos param = 
-            let curr_acc = Ast.Expr.Index (Ast.Index.make acc (Ast.Expr.Num (Ast.Num.from_int pos))) in
-            match param with
-            | Typed.Param.Name n -> 
-                [n.scope, curr_acc]
-            | Typed.Param.Tuple tup -> 
-                List.mapi tup ~f: (destruct_tuple curr_acc)
-                |> Util.Lists.flatten
-            | Typed.Param.Unit -> []
+        let rec destruct_tuple acc tup = tup
+            |> List.mapi ~f: (fun idx elem ->
+                let curr_acc = Ast.Expr.Index (Ast.Index.make acc (Ast.Expr.Num (Ast.Num.from_int idx))) in
+                destruct_shape curr_acc elem
+            ) 
+            |> Util.Lists.flatten
+        and destruct_shape acc shape = 
+            let open Typed.Node in
+            match shape with 
+            | Destruct.Name n -> 
+                [Ast.Const.make n.scope (Ast.Const.Expr acc)]
+            | Destruct.Tuple tup -> destruct_tuple acc tup 
+            | Destruct.Unit -> []
         in
-        let destruct, params = List.fold_map params ~init: [] ~f: (fun destruct param -> match Typed.Param.(param.value) with 
-            | Typed.Param.Positional {pattern = Typed.Param.Unit } ->
-                (destruct, "")
-            | Typed.Param.Positional {pattern = Typed.Param.Name n} -> 
-                (destruct, n.scope)
-            | Typed.Param.Positional {pattern = Typed.Param.Tuple tup} -> 
-                let acc = tv () in
-                let id = Ast.Expr.Ident (Ast.Ident.make acc) in
-                let destruct = List.mapi tup ~f: (destruct_tuple id)
-                |> Util.Lists.flatten
-                |> List.map ~f:(fun (name, value) ->
-                    Ast.Block.Const (Ast.Const.make name (Ast.Const.Expr (value)))
-                ) in
-                (destruct, acc)
-            | Typed.Param.Named {name} -> destruct, name.scope
-            | Typed.Param.Optional {name; default} -> 
-                let const, params = optional name.scope default in
-                (destruct @ [const], params)
-            | Typed.Param.Extension _ -> (raise Common.TODO)
+        let destruct_param_shape shape = 
+            let open Typed.Node in
+            match shape with
+            | Destruct.Unit -> ([], "")
+            | Destruct.Name n ->
+                [], n.scope
+            | Destruct.Tuple tup -> 
+                let accname = tv () in
+                let accn = Ast.Expr.Ident (Ast.Ident.make accname) in
+                let bindings = destruct_tuple accn tup in
+                (bindings, accname)
+        in
+        let destruct_param param = 
+            let open Typed.Node in
+            match param with
+            | Param.Positional {shape} ->
+                destruct_param_shape shape
+            | Param.Named {shape; _} ->
+                destruct_param_shape shape
+            | Param.Optional {scope; default; _} ->
+                optional scope default
+            | Param.Extension _ -> (raise Common.TODO)
+        in
+        let destruct, params = List.fold_map params ~init: [] ~f: (fun destruct param -> 
+            let stmts, param = destruct_param Typed.Node.Param.(param.value) in
+            (destruct @ (List.map stmts ~f: (fun s -> Ast.Block.Const s))), param
         ) in
-        let bl = block ~ctx Typed.Block.(bl.stmts) in
+        let bl = block ~ctx Typed.Node.Block.(bl.stmts) in
         let bl' = Ast.Block.{stmts = destruct @ bl.stmts} in
         Ast_util.Lambda.curried (params) (Ast.Expr.Block (bl'))
         (* let inner_lambda = Ast.Lambda.{params = convert_pattern Typed.Param.(first.value); block = block ~ctx Typed.Block.(bl.stmts)} in
         Ast.Expr.Lambda (List.fold ~init: inner_lambda ~f: (fun inner param -> 
             Ast.Lambda.{params = convert_pattern param.value; block = {stmts = [Ast.Block.Return Ast.Return.{expr=Ast.Expr.Lambda inner}]}}
         ) rest) *)
-and lambda ~ctx n = lambda_like ~ctx Typed.Lambda.(n.params) n.block
+and lambda ~ctx n = lambda_like ~ctx Typed.Node.Lambda.(n.params) n.block
 
-and block_stmt ~ctx = function
-    | Typed.Stmt.Expr n -> Ast.Block.Expr (expr ~ctx n)
-    | Typed.Stmt.Block n -> Ast.Block.Block (block ~ctx n.stmts)
-    | Typed.Stmt.Let n -> Ast.Block.Const (let_ ~ctx n)
+and block_stmts ~ctx stmts = List.filter_map stmts ~f:(function
+    | Typed.Node.Stmt.Expr n -> Some (Ast.Block.Expr (expr ~ctx n))
+    | Typed.Node.Stmt.Block n -> Some (Ast.Block.Block (block ~ctx n.stmts))
+    | Typed.Node.Stmt.Let n -> Some (Ast.Block.Const (let_ ~ctx n))
+    | Typed.Node.Stmt.Using _ -> None
+)
 
 and block ~ctx n =
-    let map_block_stmt len idx stmt = 
+    let stmts = 
+        block_stmts ~ctx n in
+    let len = List.length stmts in
+    let stmts' = stmts |> List.mapi ~f: (fun idx stmt ->
         if phys_equal idx (len - 1) then 
             match stmt with
-            | Typed.Stmt.Expr n -> Ast.Block.Return Ast.Return.{ expr = expr ~ctx n }
-            | _ -> block_stmt ~ctx stmt
-        else block_stmt ~ctx stmt
-    in Ast.Block.{ stmts = List.mapi ~f: (map_block_stmt (List.length n)) (n) }
+            | Ast.Block.Expr expr -> Ast.Block.Return Ast.Return.{ expr }
+            | t -> t
+        else stmt
+    )
+    in Ast.Block.{ stmts = stmts' }
+
+and const_expr ~ctx n = 
+    match Tn.Let.(n.params) with
+    | [] ->
+        (match Tn.Block.(n.block.stmts) with
+        | Tn.Stmt.Expr m :: [] -> Ast.Const.Expr (expr ~ctx m)
+        | _ -> Ast.Const.Block  (block ~ctx n.block.stmts))
+    | params -> Ast.Const.Expr (lambda_like ~ctx params n.block)
+
+and assign_expr ~ctx n = 
+    match Tn.Let.(n.params) with
+    | [] ->
+        (match Tn.Block.(n.block.stmts) with
+        | Tn.Stmt.Expr m :: [] -> (expr ~ctx m)
+        | _ -> Ast.Expr.Block (block ~ctx n.block.stmts))
+    | params -> (lambda_like ~ctx params n.block)
 
 and let_ ~ctx n = 
-    let const_expr = 
-        match Typed.Let.(n.params) with
-        | [] ->
-            (match Typed.Block.(n.block.stmts) with
-            | Typed.Stmt.Expr m :: [] -> Ast.Const.Expr (expr ~ctx m)
-            | _ -> Ast.Const.Block  (block ~ctx n.block.stmts))
-        | params -> Ast.Const.Expr (lambda_like ~ctx params n.block)
     (* for nested modules we truncate module path*)
-    in 
-    Ast.Const.{ name = ident_value n.scope_name; expr = const_expr }
+    Ast.Const.{ name = ident_value n.scope_name; expr = const_expr ~ctx n}
 
-and modu_entries ~ctx entries = 
+and modu_entries ~ctx prefix entries = 
     let open Typed.Node in
-    List.filter_map entries ~f: (function
+    let make_assign name expr = 
+        let name = ident_value name in
+        match prefix with
+        | "" ->
+            Ast.Block.Const (Ast.Const.expr name expr), name
+        | prefix ->
+            let prefixed = prefix ^ "." ^ (name) in
+            let assign = Ast.Block.Assign (Ast.Assign.make (Ast.Ident.make prefixed) expr) in
+            assign, prefixed
+    in
+    let nodes, names = List.filter_map entries ~f: (function
         | Module.Using _ -> None
         | Module.Binding node -> 
-            Some (Ast.Block.Const (let_ ~ctx node))
-        | Module.Module m -> Some (Ast.Block.Const (modu ~ctx m))
-        | Module.Typedef _ -> (raise Common.TODO)
-    )
+            let assign, name = make_assign node.scope_name (assign_expr ~ctx node) in
+            Some ([assign], name)
+        | Module.Module node -> 
+            let assign, name = make_assign node.scope_name (Ast.Expr.Object (Ast.Object.make [])) in
+            let entries, _ = modu_entries ~ctx name node.entries in
+            Some ((assign :: entries), name)
+        | Module.Typedef _ -> None  (* TODO: process it *)
+    ) |> List.unzip
+    in (Util.Lists.flatten nodes, names)
 
-and exposed_entries exposed = 
-    let entries = Map.to_alist exposed 
-    |> List.fold ~init: [] ~f:(fun acc (key, data) ->
-        let binding = (match Typed.Symbol.Module.(data.binding) with
-        | None -> []
-        | Some b -> 
-            [Ast.Object.Kv (key, Ast.Expr.Ident (Ast.Ident.{value = b.id.name}))])
-        in
-        let modu = (match Typed.Symbol.Module.(data.modu) with
-        | None -> []
-        | Some b -> 
-            [Ast.Object.Kv (key, Ast.Expr.Ident (Ast.Ident.{value = b.id.name}))])
-        in acc @ binding @ modu
-    ) in
-    Ast.Block.Return (Ast.Return.{expr = Ast.Expr.Object (Ast.Object.{entries})})
-
-and modu ~ctx n =
-    let exposed = exposed_entries n.exposed in
-    let modu = modu_entries ~ctx n.entries in
-    Ast.Const.block Typed.Module.(n.scope_name) (modu @ [exposed])
-
-let module_exports ~ctx root = 
-    (Typed.Node.Module.(root.exposed)
-        |> Map.to_alist ~key_order: (`Increasing))
-    |> Util.Lists.flat_map ~f:(fun (name, entries) -> 
-        let binding = (match Typed.Symbol.Module.(entries.binding) with
-            | None -> [] 
-            | Some b -> 
-                [
-                    ([Typed.Typed_common.Resolved.make name (Some b.id)] 
-                    |> resolve_ident ~ctx
-                    |> Ast.Ident.make
-                    |> Ast.Expr.ident
-                    |> Ast.Assign.make (Ast.Ident.make @@ "exports." ^ (ident_value name))
-                    |> Ast.Block.assign
-                    )
-                ]
-
-        ) in
-        let modu = (match Typed.Symbol.Module.(entries.modu) with
-            | None -> [] 
-            | Some b -> 
-                [
-                    ([Typed.Typed_common.Resolved.make name (Some b.id)] 
-                    |> resolve_ident ~ctx
-                    |> Ast.Ident.make
-                    |> Ast.Expr.ident
-                    |> Ast.Assign.make (Ast.Ident.make @@ "exports." ^ (ident_value name))
-                    |> Ast.Block.assign
-                    )
-                ]
-
-        ) in modu @ binding
-    )
-
-let root_module ~ctx root = 
-    modu_entries ~ctx (Typed.Node.Module.(root.entries)) 
-        @ (module_exports ~ctx root)
+let root_module source foreign_bindings root = 
+    let deps, required_sources = Convert_using.require_nodes ~foreign_bindings ~source root in
+    let ctx = {
+        source; required_sources
+    } in
+    let nodes, names = modu_entries ~ctx "" (Typed.Node.Module.(root.entries)) in
+    let exp = List.map names ~f: (fun name ->
+        Ast.Block.Assign (Ast.Assign.make 
+            (Ast.Ident.make("exports." ^ (name))) 
+            (Ast.Expr.Ident (Ast.Ident.make (name))))
+    ) in deps @ nodes @ exp
 
 (*
     apply order:
