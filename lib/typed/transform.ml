@@ -138,7 +138,11 @@ and value = function
     | Ast.Node.Value.Tuple tu ->
         Expr.Tuple (Tuple.{typ = Type.Unknown; range = tu.range; exprs = List.map ~f:expr tu.exprs })
     | Ast.Node.Value.Li li -> 
-        Expr.Li Li.{typ = Type.Unknown; range = li.range; items = List.map ~f:expr li.items }
+        let item = function
+            | AstNode.Li.Single e -> TyNode.Li.Single (expr e)
+            | AstNode.Li.Spread e -> TyNode.Li.Spread (expr e)
+        in
+        Expr.Li Li.{typ = Type.Unknown; range = li.range; items = List.map ~f:item li.items}
     | AstNode.Value.Lambda lam -> 
         let b = block lam.block in
         let a = params ~expr lam.params in

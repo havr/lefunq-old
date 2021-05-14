@@ -309,26 +309,42 @@ and new_apply ~ctx ~expr app =
     ) in {app with fn = fn_node; args = arg_nodes; typ = app_typ}, app_typ
 
 and list ~ctx n = 
+    let item ~ctx = function
+        | Li.Single e ->
+            let n, t = expr ~ctx e in
+            n, Li.Single n, t, Base_types.list t
+        | Li.Spread e ->
+            let n, t = expr ~ctx e in
+            let it = ctx.tempvar () in
+            let list_t = Base_types.list it in
+            Infer_ctx.unify ~ctx list_t t ~error: (
+                Errors.ListTypeExpected {
+                    range = Expr.range e;
+                    got_unexpected = t;
+                }
+            );
+            n, Li.Spread n, it, list_t
+    in
     match Li.(n.items) with
     | [] -> Li.{n with items = []}, (Base_types.list Infer_ctx.(ctx.tempvar()))
     | single :: [] ->
-        let node, typ = expr ~ctx single in
-        Li.{n with items = [node]}, Base_types.list typ
+        let _, node, _, li_typ = item ~ctx single in
+        Li.{n with items = [node]}, li_typ
     | first :: rest ->
-        let first_n, first_t = expr ~ctx first in
-        let rest_n, _ = List.map rest ~f: (fun e ->
-            let n, t = expr ~ctx e in
+        let _, first_n, it_typ, _ = item ~ctx first in
+        let rest_n = List.map rest ~f: (fun it ->
+            let e, n, t, _ = item ~ctx it in
             (* TODO: make a generic function to skip errors *)
-            Infer_ctx.unify ~ctx first_t t ~error: (
-                Errors.BranchTypeMismatch {
+            Infer_ctx.unify ~ctx it_typ t ~error: (
+                Errors.ListItemTypeMismatch {
                     range = Expr.range e;
-                    expected = first_t;
+                    expected = it_typ;
                     unexpected = t;
                 }
             );
-            n, first_t
-        ) |> List.unzip
-        in Li.{n with items = first_n :: rest_n}, Base_types.list (first_t)
+            n
+        ) 
+        in Li.{n with items = first_n :: rest_n}, Base_types.list (it_typ)
 
 and expr ~ctx e = 
     match e with

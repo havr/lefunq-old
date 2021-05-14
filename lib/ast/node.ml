@@ -366,15 +366,26 @@ end = struct
         ] @ (List.map ~f:pp_arg app.args))
 end
 and Li: sig 
-    type t = { range: Span.range; items: Expr.t list }
+    type item = 
+        | Single of Expr.t
+        | Spread of Expr.t
+
+    type t = { range: Span.range; items: item list }
 
     val pretty_print: t -> Pp.branch
 end = struct 
-    type t = { range: Span.range; items: Expr.t list }
+    type item = 
+        | Single of Expr.t
+        | Spread of Expr.t
+
+    type t = { range: Span.range; items: item list }
 
     let pretty_print node = 
-        let items = node.items in
-        Pp.(branch [text "LIST"] (List.map items ~f: Expr.pretty_print))
+        let item = function
+            | Single ex -> Expr.pretty_print ex
+            | Spread ex -> Pp.(branch [text ".."] [Expr.pretty_print ex])
+        in
+        Pp.branch [Pp.text "LIST"] (List.map node.items ~f: item)
 end
 and Tuple: sig 
     type t = { range: Span.range; exprs: Expr.t list }

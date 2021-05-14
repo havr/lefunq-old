@@ -4,7 +4,6 @@ open Common
 open Comb
 open Comb.Syntax
 
-
 (* TODO: move somewhare *)
 let forward_decl (type a) (type r) () = 
     let fn: (a -> r) Option.t ref = ref None in
@@ -580,37 +579,41 @@ and list () =
         and+ _ = Lexemes.semi
         and+ _ = maybe newlines in ()
     in
+    let rec single () =  
+        let+ e = expr () 
+        and+ rest = maybe @@ next () in
+        match rest with
+        | None -> [Node.Li.Single e]
+        | Some items -> ((Node.Li.Single e) :: items)
+    and spread () = 
+        let+ _ = Lexemes.spread
+        and+ e = expect @@ expr ()
+        and+ rest = maybe @@ next () in
+        match rest with
+        | None -> [Node.Li.Spread e]
+        | Some items -> ((Node.Li.Spread e) :: items)
+    and next () = 
+        let next_singlea () = 
+            let+ _ = choice [semi; newlines] 
+            and+ r = single () in r
+        in
+        let next_spreada () = 
+            let+ _ = maybe @@ choice [semi; newlines] 
+            and+ r = spread () in r
+        in choicef [(fun () -> next_singlea()); (fun () -> next_spreada())]
+    in
+    let init = choicef [
+        (fun () -> single ());
+        (fun () -> spread ())
+    ] in
     let+ open_bracket = Lexemes.open_bracket 
-    and+ exprs = ignore_newline @@ maybe @@ separated_by_with_traliing (
-        choice [ 
-            semi; newlines
-        ]
-    ) (expr())
+    and+ exprs = ignore_newline @@ maybe @@ init
     and+ close_bracket = expect @@ ignore_newline @@ Lexemes.close_bracket in
     Node.Li.{
         range = Span.merge open_bracket.range close_bracket.range;
         items = exprs |> Option.value ~default: []
     }
-(* and expr () = 
-    (* let elem = choicef [
-    (* use here the .fn = fn trick *)
-        (fun () -> map (value ()) (fun n -> Node.Expr.Value n));
-        (fun () -> map (tuple' ()) (fun n -> n));
-        (fun () -> map (cond ()) (fun n -> Node.Expr.Cond n));
-    ] in  *)
-    let parens = 
-        let+ open_paren = Lexemes.open_paren 
-        and+ expr = maybe @@ (binary ())
-        and+ close_paren = expect @@ Lexemes.close_paren in
-        match expr with
-        | None -> Node.Expr.Value (Node.Value.Unit (Span.merged open_paren.range close_paren.range ()))
-        | Some v -> v
-    in 
-    (* elem *)
 
-    choice [
-        (binary()); parens
-    ] *)
 and unary () =
     let rec make expr = function
     | [] -> expr

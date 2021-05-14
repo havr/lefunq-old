@@ -298,6 +298,13 @@ module Frontend = struct
             msg = (String.concat ~sep: " " ["Lambda contains only positional arguments. Cannot apply without a label:"; Span.range_str range; Typed.Type.to_string lambda]);
             context = None
         }
+    | ListTypeExpected {range; got_unexpected} -> 
+        Common.Err.{
+            file;
+            range = range;
+            msg = (String.concat ~sep: " " ["A list type expected, but got:"; Typed.Type.to_string got_unexpected]);
+            context = None
+        }
 
     let rec resolve_source ~builtin ~ctx import_stack source = 
         match resolve_source_file ~ctx import_stack source with

@@ -428,6 +428,23 @@ let lambdas = EndToEnd.define "lambdas" [
     };
 ]
 
+let lists = EndToEnd.define "lists" [
+    {
+        name = "spread";
+        expect = "[ 1, 2, 3, 10, 20, 100 ]";
+        main = "/main.lf";
+        files = [
+            "/main.lf", {|
+                let main = {
+                    let first = [1; 2]
+                    let second = [10; 20]
+                    println [..first; 3 ..second; 100]
+                }
+            |}
+        ]
+    }
+]
+
 let matching = EndToEnd.define "js:pattern-match" [
     {
         name = "numbers";
@@ -626,4 +643,4 @@ let using = EndToEnd.define "using" [
 
 ]
 
-let tests = [sigs; lambdas; modules; matching; using] 
+let tests = [sigs; lambdas; modules; matching; using; lists] 

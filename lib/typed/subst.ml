@@ -91,9 +91,14 @@ and apply_ident substs id =
 
 and apply_to_expr substs expr = 
     match expr with
-    | Expr.Li li -> Expr.Li Li.{ li with
+    | Expr.Li li -> 
+        let apply_to_item = function
+            | Li.Spread s -> (Li.Spread (apply_to_expr substs s))
+            | Li.Single s -> (Li.Single (apply_to_expr substs s))
+        in
+        Expr.Li Li.{ li with
             typ = (apply substs li.typ);
-            items = List.map li.items ~f: (apply_to_expr substs)
+            items = List.map li.items ~f: apply_to_item
         }
     | Expr.Foreign n -> Expr.Foreign (Foreign.({ n with 
             typ = apply substs n.typ;
@@ -186,6 +191,9 @@ let apply_to_error substs err =
             expected = apply substs t.expected;
             unexpected = apply substs t.unexpected
     } 
+    | ListTypeExpected t -> ListTypeExpected {
+        t with got_unexpected = apply substs t.got_unexpected
+    }
     | UndeclaredIdentifier t -> UndeclaredIdentifier t
     | CyclicDependency t -> CyclicDependency t
     | SourceNotFound t -> SourceNotFound t

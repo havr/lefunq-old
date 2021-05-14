@@ -36,7 +36,10 @@ let require_nodes ~foreign_bindings ~source root =
 
         and expr = function
             | Value _ -> ()
-            | Li li -> List.iter li.items ~f:expr
+            | Li li -> List.iter li.items ~f:(function 
+                | Li.Single e -> expr e 
+                | Li.Spread e -> expr e
+            )
             | Foreign _ ->
                 (* TODO: check it earlier? *)
                 add_dep ~name: foreign_require (Option.value_exn foreign_bindings)

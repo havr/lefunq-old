@@ -272,16 +272,23 @@ end = struct
     }
 end
 and Li: sig
+    type item = 
+        | Single of Expr.t
+        | Spread of Expr.t
+
     type t = {
         typ: Type.t;
         range: Span.range;
-        items: Expr.t list
+        items: item list
     }
 end = struct 
+    type item = 
+        | Single of Expr.t
+        | Spread of Expr.t
     type t = {
         typ: Type.t;
         range: Span.range;
-        items: Expr.t list
+        items: item list
     }
 end
 and Lambda: sig 
@@ -560,7 +567,11 @@ module Print_node = struct
         branch [text "LAMBDA"; text (Type.to_string n.typ)] [params_branch; block n.block]
 
     and list n = 
-        let items = List.map n.items ~f:expr in
+        let item = function
+            | Li.Single ex -> expr ex
+            | Li.Spread ex -> Pp.(branch [text ".."] [expr ex])
+        in
+        let items = List.map n.items ~f:item in
         branch [text "LIST"] items
 
     and tuple n = branch [text "TUPLE"] (List.map ~f:expr n.exprs)

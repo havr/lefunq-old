@@ -113,7 +113,12 @@ let find_let_in_stmts path stmts =
             )) with
             | Some m -> Some m
             | None -> (Option.find_map c.else_ ~f: (fun b -> find_in_stmts path b.stmts)))
-        | Li li -> List.find_map li.items ~f:(find_in_expr path)
+        | Li li -> 
+            let item = function
+                | Node.Li.Single e -> find_in_expr path e
+                | Node.Li.Spread e -> find_in_expr path e
+            in
+            List.find_map li.items ~f:item
         | Tuple tup ->  List.find_map tup.exprs ~f:(find_in_expr path)
         | Foreign _ -> None
         | Match m -> (match find_in_expr path m.expr with
@@ -160,7 +165,12 @@ let find_ident name stmts =
             )) with
             | Some m -> Some m
             | None -> (Option.find_map c.else_ ~f: (fun b -> find_in_stmts b.stmts)))
-        | Li li -> List.find_map li.items ~f:find_in_expr
+        | Li li -> 
+            let item = function
+                | Node.Li.Single e -> find_in_expr e
+                | Node.Li.Spread e -> find_in_expr e
+            in
+            List.find_map li.items ~f:item
         | Tuple tup ->  List.find_map tup.exprs ~f:find_in_expr
         | Foreign _ -> None
         | Match m -> (match find_in_expr m.expr with

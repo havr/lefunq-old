@@ -59,6 +59,9 @@ type t =
     lambda: Type.t;
 } | InternalError of {
     message: string;
+} | ListTypeExpected of {
+    range: Span.range;
+    got_unexpected: Type.t;
 }
  
 let clear_range = function 
@@ -91,6 +94,8 @@ let clear_range = function
     SourceSystemError {source = {source with range = Span.empty_range}}
 | NonExhaustivePatternMatching {missing_cases; _} -> 
     NonExhaustivePatternMatching {range = Span.empty_range; missing_cases}
+| ListTypeExpected {got_unexpected; _} ->
+    ListTypeExpected {range = Span.empty_range; got_unexpected}
 | UnusedMatchCase _ -> UnusedMatchCase {range = Span.empty_range}
 | CannotApplyWithLabel r -> CannotApplyWithLabel {r with range = Span.empty_range}
 | CannotApplyWithoutLabel r -> CannotApplyWithoutLabel {r with range = Span.empty_range}
@@ -141,5 +146,7 @@ let to_string = function
     concat ["Lambda contains only positional arguments. Cannot apply without a label:"; Span.range_str range; Type.to_string lambda]
 | InternalError {message} ->
     concat ["Internal error:"; message]
+| ListTypeExpected {got_unexpected; _} ->
+    concat ["List type expected, but got:"; Type.to_string got_unexpected]
 
 let equals a b = String.equal (to_string a) (to_string b)

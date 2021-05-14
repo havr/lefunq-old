@@ -162,6 +162,9 @@ module Li = struct
   open Ast.Node
   let test_li = test (Ast.Parser.list()) Li.pretty_print
 
+  let single_int_value i = Li.Single (Expr.Value (Value.Int (Span.empty i)))
+  let single_spread_ident i = Li.Spread (Expr.Value (Value.Ident (Span.empty i)))
+
   let tests = [
     "test_empty", `Quick, (fun () -> test_li
       ~input: "[]"
@@ -185,9 +188,9 @@ module Li = struct
       ~expect: Li.{
         range = Span.empty_range;
         items = [
-          Expr.Value (Value.Int (Span.empty "1"));
-          Expr.Value (Value.Int (Span.empty "2"));
-          Expr.Value (Value.Int (Span.empty "3"));
+          single_int_value "1";
+          single_int_value "2";
+          single_int_value "3"
         ]
       }
     );
@@ -201,9 +204,9 @@ module Li = struct
         ~expect: Li.{
           range = Span.empty_range;
           items = [
-            Expr.Value (Value.Int (Span.empty "1"));
-            Expr.Value (Value.Int (Span.empty "2"));
-            Expr.Value (Value.Int (Span.empty "3"));
+            single_int_value "1";
+            single_int_value "2";
+            single_int_value "3"
           ]
         }
     );   
@@ -216,11 +219,73 @@ module Li = struct
         ~expect: Li.{
           range = Span.empty_range;
           items = [
-            Expr.Value (Value.Int (Span.empty "1"));
-            Expr.Value (Value.Int (Span.empty "2"));
+            single_int_value "1";
+            single_int_value "2"
           ]
         }
-    )
+    );
+
+    "test_spread", `Quick, (fun () -> test_li
+        ~input: "[
+          ..a
+        ]"
+        ~expect: Li.{
+          range = Span.empty_range;
+          items = [
+            single_spread_ident "a";
+          ]
+        }
+    );   
+
+    "test_spread_seq", `Quick, (fun () -> test_li
+        ~input: "[
+          ..a ..b; ..c 
+        ]"
+        ~expect: Li.{
+          range = Span.empty_range;
+          items = [
+            single_spread_ident "a";
+            single_spread_ident "b";
+            single_spread_ident "c";
+          ]
+        }
+    );   
+
+  "test_spread_value_mix", `Quick, (fun () -> test_li
+      ~input: "[
+        ..a; 1 ..b; 2; ..c 
+      ]"
+      ~expect: Li.{
+        range = Span.empty_range;
+        items = [
+          single_spread_ident "a";
+          single_int_value "1";
+          single_spread_ident "b";
+          single_int_value "2";
+          single_spread_ident "c";
+        ]
+      }
+  );   
+
+  "test_spread_value_mix_newline", `Quick, (fun () -> test_li
+      ~input: "[
+        ..a;
+        1 
+        ..b
+        2
+        ..c 
+      ]"
+      ~expect: Li.{
+        range = Span.empty_range;
+        items = [
+          single_spread_ident "a";
+          single_int_value "1";
+          single_spread_ident "b";
+          single_int_value "2";
+          single_spread_ident "c";
+        ]
+      }
+  );   
   ]
 end
 

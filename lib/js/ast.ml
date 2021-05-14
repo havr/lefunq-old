@@ -160,6 +160,19 @@ end = struct
     type t = {expr: Expr.t; then': Expr.t; else': Expr.t}
     let make expr then' else' = {expr; then'; else'}
 end
+and Li: sig
+    type item = 
+        | Single of Expr.t
+        | Spread of Expr.t
+
+    type t = item list
+end = struct 
+    type item = 
+        | Single of Expr.t
+        | Spread of Expr.t
+
+    type t = item list
+end
 and Expr: sig 
     type t = 
         | Num of Num.t 
@@ -172,7 +185,7 @@ and Expr: sig
         | Lambda of Lambda.t 
         | Block of Block.t 
         | Parens of Expr.t
-        | Li of (Expr.t list)
+        | Li of Li.t
         | Void
         | Null
         | Index of Index.t
@@ -193,7 +206,7 @@ end = struct
         | Lambda of Lambda.t 
         | Block of Block.t 
         | Parens of Expr.t
-        | Li of (Expr.t list)
+        | Li of Li.t
         | Void
         | Null
         | Index of Index.t
@@ -318,7 +331,10 @@ module Prn = struct
         | Expr.Property n -> seq [expr Property.(n.expr); str "."; str n.name]
         | Expr.Li li ->
             let open Base in
-            let items = List.map ~f:expr li in
+            let items = List.map ~f:(function 
+                | Li.Single e -> expr e
+                | Li.Spread e -> seq [str "..."; expr e]
+            ) li in
             seq[str "["; seq ~sep: "," items; str "]"]
         | Expr.Parens p -> seq[str "("; expr p; str ")"]
         | Expr.Unary n -> 

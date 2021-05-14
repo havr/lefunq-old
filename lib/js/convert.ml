@@ -128,7 +128,10 @@ let rec apply ~ctx n = begin
 end and expr ~ctx n = 
     let open Typed.Node in
     match n with
-    | Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (expr ~ctx))
+    | Expr.Li li -> Ast.Expr.Li (List.map li.items ~f: (function 
+        | Li.Single e -> Ast.Li.Single (expr ~ctx e)
+        | Li.Spread e -> Ast.Li.Spread (expr ~ctx e)
+    ))
     | Expr.Value m -> basic m
     | Expr.Ident m -> Ast.Expr.Ident (ident ~ctx m)
     | Expr.Apply m -> apply ~ctx m
@@ -146,7 +149,7 @@ end and expr ~ctx n =
         in
         Ast_util.Lambdas.scoped ["__TODO", expr ~ctx m.expr] [Ast.Block.Cond cond]
     | Cond m -> cond ~ctx m
-    | Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (expr ~ctx))
+    | Tuple t -> Ast.Expr.Li (List.map t.exprs ~f: (fun e -> Ast.Li.Single (expr ~ctx e)))
     | Foreign f -> Ast.Expr.Ident Ast.Ident.{value = foreign_require ^ "." ^ f.name}
 and cond ~ctx n = 
     let open Typed.Node in
