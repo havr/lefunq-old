@@ -108,7 +108,6 @@ module Frontend = struct
     let source_path pkgs cwd source =
         let resolve_absolute abs = 
             let found = List.find_map pkgs ~f: (fun (name, path) -> 
-                Common.log[name; path; abs];
                 if String.is_prefix abs ~prefix:path then (
                     let pkg_relative = String.chop_prefix_exn abs ~prefix:path in
                     Some (name ^ "/" ^ pkg_relative)
@@ -363,12 +362,10 @@ module Frontend = struct
         let process ~builtin name = 
             match resolve_source_file ~ctx [] name with
             | Some (rel, abs) ->
-                Common.log["process name"; name; rel; abs];
                 compile ~builtin ~ctx [rel] (rel, abs)
                 |> (map_error ~ctx name)
                 |> Result.map ~f: (fun m -> Typed.Resolved.Module.(m.exposed))
             | None -> 
-                Common.log["process name"; name; "nf"];
                 Error (NotFound name)
         in
         let builtin = match config.builtin with
@@ -377,7 +374,9 @@ module Frontend = struct
         in
         match builtin with
         | Ok builtin -> (
-            process ~builtin entrypoint 
+            let needs_fix = List.find ["."; "/"] ~f: (fun prefix -> String.is_prefix ~prefix entrypoint) 
+                |> Option.is_none in
+            process ~builtin (if needs_fix then "./" ^ entrypoint else entrypoint)
         )
         | Error e -> Error e 
 end

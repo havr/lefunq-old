@@ -222,7 +222,6 @@ let matc ~ctx ~expr ~block_stmts m =
 
         (* TODO:  *)
         let case_stmts, case_result = block_stmts ~ctx case.stmts in
-        Common.log["result"; Type.to_string result; Type.to_string case_result];
         let result' = match result with
         | Type.Unknown -> case_result
         | t -> Infer_ctx.unify ~ctx result t ~error: (Errors.BranchTypeMismatch {

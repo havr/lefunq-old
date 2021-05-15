@@ -510,7 +510,6 @@ and cond () =
             else_=Some else_expr
                 }
 and fn_expr () =
-    (* Common.log [Common.stacktrace ()]; *)
     let parens () = 
         let+ open_paren = Lexemes.open_paren 
         and+ expr = maybe @@ (tuple_expr ())
@@ -771,7 +770,6 @@ and lambda () =
     let+ start = Lexemes.lambda
     and+ params = many @@ (ignore_newline @@ Param.param ~expr)
     and+ b = expect @@ ignore_newline @@ (block ()) in
-        Common.log[List.length b.stmts |> Int.to_string];
         Node.Lambda.{
             range=Span.merge start.range b.range;
             params = Util.Lists.flatten params;

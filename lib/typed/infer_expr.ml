@@ -174,10 +174,8 @@ and let_lambda ~ctx parent_env params bl =
     let typ =  (Infer_ctx.apply ~ctx (lambda_type params ret)) in
     let free = Set.diff (Type.free_vars typ) (Infer_env.free_vars (Infer_env.apply_substs !(ctx.substs) parent_env))
         |> Set.to_list in
-    Common.log ["@@"; String.concat ~sep:";" free];
     let vars, fvsubsts = free_var_rename_substs free in
     let substs = Subst.combine (Subst.apply_to_substs !(ctx.substs) fvsubsts) fvsubsts in
-    Common.log["##"; Type.to_string typ; Subst.to_string substs];
     let block = Subst.apply_to_block substs block in
     let params = Subst.apply_substs_to_params substs params in
     let typ = Subst.apply substs typ in
