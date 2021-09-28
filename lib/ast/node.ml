@@ -603,6 +603,27 @@ end = struct
             pretty_print_cases m.block
         ])
 end
+and Struct: sig 
+    type elem = 
+        | Pun of (string Span.t)
+        | Value of (string Span.t * (Expr.t))
+        | Group of elem list
+
+    type t = {
+        keyword: string Span.t;
+        elems: elem list
+    }
+end = struct 
+    type elem = 
+        | Pun of (string Span.t)
+        | Value of (string Span.t * (Expr.t))
+        | Group of elem list
+
+    type t = {
+        keyword: string Span.t;
+        elems: elem list
+    }
+end
 
 module Root = struct 
     type t = {

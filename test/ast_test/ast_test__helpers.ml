@@ -5,7 +5,7 @@ let test parser to_pp ~input ~expect =
   let (result, _) = match Ast.Comb.(parser.fn) (Ast.Comb.State.make lexemes) with
   | Ok r -> r
   | Error e ->
-    Alcotest.fail @@ "unexpected error: "  ^ (Ast.Comb.err_to_string e)
+    Alcotest.fail ("unexpected error: "  ^ (Ast.Comb.err_to_string e))
   in
   let got_ast = Pp.to_string [to_pp result] in
   let expect_ast = Pp.to_string [to_pp expect] in

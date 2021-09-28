@@ -30,6 +30,7 @@ type t = Int of string
     | Match
     | Ampersand
     | Type
+    | Struct
     | Error of string
 
 let to_string lexeme = match lexeme with
@@ -65,6 +66,7 @@ let to_string lexeme = match lexeme with
     | Spread -> ".."
     | Ampersand -> "&"
     | Type -> "type"
+    | Struct -> "struct"
     | Error e -> "error: " ^ e
 
 let eof = Eof

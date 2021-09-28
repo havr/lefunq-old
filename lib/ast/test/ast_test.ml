@@ -1,6 +1,7 @@
-open Parlex
+(* open Parlex *)
 
 
+(*
 module MatchersTest = struct 
   let check_outcome (ok, next_state) (got_ok, got_pos) = 
     let open Types.Pos in
@@ -99,3 +100,4 @@ let () = Alcotest.run "Parlex" [
   (* "Parser", ParserTest.tests *)
 ]
 
+*)

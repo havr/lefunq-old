@@ -37,19 +37,16 @@ let assert_errors expected got =
   let issues = [labeled_exp; labeled_unexp] 
   |> List.filter ~f: (fun s -> not @@ String.is_empty s) in
   if List.length issues > 0 then
-    issues 
-      |> String.concat ~sep: "\n"
-      |> Alcotest.fail
-      |> ignore
+      ignore @@ Alcotest.fail (String.concat ~sep: "\n" issues)
 
   let check_results ?(errors=[]) ~ctx ~expect_type ~expect subst typ = 
     let typ = Typed.Subst.apply subst typ in
     let results = Unify.results expect subst in
     begin 
       if not @@ Typed.Type.equals typ expect_type then
-        Alcotest.fail @@ String.concat [
+        Alcotest.fail (String.concat [
           "(got) "; Typed.Type.to_string typ; " != (expected) "; Typed.Type.to_string expect_type
-        ]
+        ])
     end;
     begin 
       if List.length results > 0 then

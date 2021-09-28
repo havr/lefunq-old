@@ -9,6 +9,8 @@ let module_of code =
     | Ok stmts ->
         Typed.Infer_toplevel.root ~builtin: (Map.empty(module String)) ~source: "" ~resolve_source: (fun _ -> raise Common.TODO) stmts
 
+let alcotest_fail msg = ignore @@ Alcotest.fail msg
+
 let split ~equals expect got =
     let expected_not_got = List.filter expect ~f: (fun e ->
         Option.is_none @@ List.find got ~f: (equals e)
@@ -18,7 +20,7 @@ let split ~equals expect got =
     ) in
     (expected_not_got, got_unexpected)
 
-let test ?(expect_errors=[]) ~code ~expect = 
+let test ?(expect_errors=[]) ~code ~expect () = 
     match module_of code with
     | Ok modu -> (
         let lookup_scope_name modu scope_name =
@@ -50,7 +52,7 @@ let test ?(expect_errors=[]) ~code ~expect =
                 ]
             ) 
             |> String.concat ~sep: "\n"
-            |> Alcotest.fail
+            |> alcotest_fail
         )
     | Error got_errors -> (
         let got_errors = List.map got_errors ~f: (Typed.Errors.clear_range) in

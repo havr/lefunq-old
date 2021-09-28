@@ -72,9 +72,11 @@ module EndToEnd = struct
             Alcotest.fail ("read error")
                 |> ignore
         | Error (Make.SourceErrors es) -> 
-            List.map es ~f: (fun e -> Caml.Format.sprintf "%s: %s" (Span.range_str e.range) e.msg)
-                |> String.concat ~sep: "\n" 
-                |> Alcotest.fail
+            List.map es ~f: (fun e -> 
+                Alcotest.fail (
+                    Caml.Format.sprintf "%s: %s" (Span.range_str e.range) e.msg)
+                    |> String.concat ~sep: "\n" 
+                )
                 |> ignore
         | Ok lines -> 
             let got = String.concat ~sep:"\n" lines in

@@ -70,6 +70,8 @@ module Lexemes = struct
     let ampersand = match_map(function | Ampersand -> Some () | _ -> None)
     let colon = match_map(function | Colon -> Some () | _ -> None)
     let type' = match_map(function | Type -> Some () | _ -> None)
+
+    let struct' = match_map(function | Struct -> Some () | _ -> None)
 end
 
 let throw e = {fn = fun _ -> Error e}
@@ -465,6 +467,34 @@ let rec value () = choice [
     map (list()) (fun v -> Node.Value.Li v);
     foreign
 ] 
+(*
+let x = struct &{
+    name: 10 &value
+}
+pun
+group
+value
+*)
+
+and struct' = 
+    let field =
+        let+ name = Lexemes.ident
+        and+ value = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ value = ignore_newline @@ (fn_expr ())
+            in value
+        ) in (match value with
+            | None -> ()
+            | Some _ -> ()
+        )
+    in
+    let entry =
+        let+ amp = Lexemes.ampersand
+        and+ field = field in field
+    in
+    let+ keyword = Lexemes.struct'
+    and+ entries = one_more @@ (ignore_newline @@ entry) in 
+    
 (* TODO: check if it's possible to swith monads to applicatives whenever it's possible *)
 and cond () =
     let block_or_expr () = choice [
@@ -592,14 +622,14 @@ and list () =
         | None -> [Node.Li.Spread e]
         | Some items -> ((Node.Li.Spread e) :: items)
     and next () = 
-        let next_singlea () = 
+        let next_single () = 
             let+ _ = choice [semi; newlines] 
             and+ r = single () in r
         in
-        let next_spreada () = 
+        let next_spread () = 
             let+ _ = maybe @@ choice [semi; newlines] 
             and+ r = spread () in r
-        in choicef [(fun () -> next_singlea()); (fun () -> next_spreada())]
+        in choicef [(fun () -> next_single()); (fun () -> next_spread())]
     in
     let init = choicef [
         (fun () -> single ());
