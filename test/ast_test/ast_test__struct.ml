@@ -28,7 +28,7 @@ let struct_def = [
             }
         }))
     );
-    "match", `Quick, (fun () -> struct_def_test_acse
+    "match", `Quick, (fun () -> struct_def_test_case
         ~input: "func hello ? { 
             | t -> 1
         }"
@@ -54,4 +54,4 @@ let struct_def = [
     )
 ]
 
-let tests = struct_def_test_case @ [];
+let tests = struct_def @ [];

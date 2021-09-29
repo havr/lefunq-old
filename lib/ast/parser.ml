@@ -476,25 +476,6 @@ group
 value
 *)
 
-and struct' = 
-    let field =
-        let+ name = Lexemes.ident
-        and+ value = maybe @@ (
-            let+ _ = Lexemes.colon
-            and+ value = ignore_newline @@ (fn_expr ())
-            in value
-        ) in (match value with
-            | None -> ()
-            | Some _ -> ()
-        )
-    in
-    let entry =
-        let+ amp = Lexemes.ampersand
-        and+ field = field in field
-    in
-    let+ keyword = Lexemes.struct'
-    and+ entries = one_more @@ (ignore_newline @@ entry) in 
-    
 (* TODO: check if it's possible to swith monads to applicatives whenever it's possible *)
 and cond () =
     let block_or_expr () = choice [
