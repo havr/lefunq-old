@@ -756,7 +756,8 @@ and block () =
     let+ open_lex = Lexemes.open_block
     and+ stmts = block_stmts() 
     and+ close_lex = expect 
-        ~exp: "block statement or end of block"
+        (* TODO: why *)
+        (* ~exp: "block statement or end of block" *)
         @@ ignore_newline @@ Lexemes.close_block
     in Node.Block.{
         range = Span.merge open_lex.range close_lex.range;
@@ -787,6 +788,22 @@ and lambda () =
             block=b
         }
 
+let type_decl = 
+    let+ span = Lexemes.foreign in
+    `Typedef (Node.Typedef.Foreign span.range)
+
+let rec typespace_name_decl = 
+    let+ name = Lexemes.ident (* TODO: it should be uppercase *)
+    (* TODO: type parameters *)
+    and+ _ = Lexemes.eq
+    and+ value = expect ~exp: "TODO" @@ ignore_newline @@ choice [type_decl]
+    in match value with
+        | `Typedef def -> Node.Module.Typedef Node.Typedef.{
+            name = name;
+            params = [];
+            def = def;
+        }
+
 and module_entries () = 
     let root_stmt () = choicef [
         (fun () -> map (sig_()) (fun v -> Node.Module.Let v));
@@ -794,6 +811,7 @@ and module_entries () =
         (fun () -> map (let_()) (fun v -> Node.Module.Let v));
         (fun () -> map (using) (fun v -> Node.Module.Using v));
         (fun () -> map (modu ()) (fun m -> Node.Module.Module m));
+        (fun () -> typespace_name_decl);
     ] in let separated_block_stmt = 
         let+ stmt = ignore_newline @@ (root_stmt ())
         and+ _ = maybe @@ Lexemes.stmt_separator in
@@ -862,6 +880,8 @@ let () = init_modu (fun () ->
         entries
     }
 )
+
+
 
 let root = 
     let+ entries = module_entries ()

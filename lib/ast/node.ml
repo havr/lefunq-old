@@ -485,6 +485,7 @@ and Module: sig
     }
 
     val pretty_print: t -> Pp.branch
+    val pp_entry: entry -> Pp.branch
 end = struct 
     type entry = 
         | Let of Let.t 
@@ -499,15 +500,13 @@ end = struct
         entries: entry list
     }
 
+    let pp_entry = function
+        | Let t -> Let.pretty_print t
+        | Using  i -> Using.pretty_print i
+        | Module m -> Module.pretty_print m
+        | Typedef t -> Typedef.pretty_print t
     let pretty_print n = 
-        Pp.(branch [text "MODULE"; spanned n.name] (
-            List.map n.entries ~f: (function
-                | Let t -> Let.pretty_print t
-                | Using  i -> Using.pretty_print i
-                | Module m -> Module.pretty_print m
-                | Typedef t -> Typedef.pretty_print t
-            )
-        ))
+        Pp.(branch [text "MODULE"; spanned n.name] (List.map n.entries ~f: pp_entry))
 
 end
 and Match: sig 
