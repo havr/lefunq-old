@@ -30,6 +30,27 @@ module Lexemes = struct
 
     let import = match_map (function Import -> Some "import" | _ -> None)
     let ident = match_map (function Ident n -> Some n | _ -> None)
+    
+
+    let test_first_non_underscore_char s fn = 
+        let rec trim_underscores n = 
+            match String.chop_prefix n ~prefix: "_" with
+            | Some s  -> trim_underscores s
+            | None -> n
+        in
+        let t = trim_underscores s in
+        if String.length t = 0 then false else fn (String.get t 0)
+
+    let lowercase_ident = match_map (function 
+        | Ident n -> if test_first_non_underscore_char n Char.is_lowercase then Some n else None
+        | _ -> None
+    )
+
+    let uppercase_ident = match_map (function 
+        | Ident n -> if test_first_non_underscore_char n Char.is_uppercase then Some n else None
+        | _ -> None
+    )
+
     let ident_of opts = match_map (function
         | Ident n -> List.find opts ~f: (String.equal n)
         | _ -> None
@@ -793,14 +814,20 @@ let type_decl =
     `Typedef (Node.Typedef.Foreign span.range)
 
 let rec typespace_name_decl = 
-    let+ name = Lexemes.ident (* TODO: it should be uppercase *)
-    (* TODO: type parameters *)
-    and+ _ = Lexemes.eq
+    let type_params = 
+        let+ _ = ignore_newline @@ Lexemes.pipe
+        (* TODO: if it's uppercase, add meaningful error *)
+        and+ ps = expect @@ one_more @@ (ignore_newline @@ Lexemes.lowercase_ident) in
+        List.map ps ~f: (fun span -> Node.Typedef.{var = span})
+    in
+    let+ name = Lexemes.uppercase_ident
+    and+ params = many @@ type_params
+    and+ _ = expect @@ ignore_newline @@ Lexemes.eq
     and+ value = expect ~exp: "TODO" @@ ignore_newline @@ choice [type_decl]
     in match value with
         | `Typedef def -> Node.Module.Typedef Node.Typedef.{
             name = name;
-            params = [];
+            params = List.join params;
             def = def;
         }
 

@@ -38,18 +38,17 @@ let new_tests = [
         }))
     );
 
-    (* TODO *)
-    (* "foreign_params", `Quick, (fun () -> test_case
-        ~input: "type Type a b = foreign"
-        ~expect: (Typedef.{
+    "foreign_params", `Quick, (fun () -> new_test_case
+        ~input: "Type | a b = foreign"
+        ~expect: (Module.Typedef (Typedef.{
             name = Span.empty "Type";
             params = [
                 {var = Span.empty "a"};
                 {var = Span.empty "b"}
             ];
             def = Typedef.Foreign (Span.empty_range)
-        })
-    ); *)
+        }))
+    );
 ]
 
 let tests = new_tests @ old_tests;
