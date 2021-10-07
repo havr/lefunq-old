@@ -146,6 +146,8 @@ let is_ident_uppercase name =
             else str
     in Char.is_uppercase @@ String.get (trim_underscores name) 0
 
+let recur parser = { fn = fun state -> (parser ()).fn state }
+
 let choicef parserfns = { fn = fun state -> 
     let found = List.find_map parserfns ~f:(fun parser -> 
         match (maybe @@ parser()).fn state with
@@ -330,6 +332,113 @@ module Destruct = struct
         | Some multiple -> Tuple multiple
     and shape () = choicef [
         (fun () -> name); tuple;
+    ]
+end
+
+module FuncParam = struct 
+    let block_optional ~expr = 
+        let+ name = Lexemes.ident
+        and+ _ = Lexemes.matc 
+        and+ alias = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ alias = Lexemes.ident in alias)
+        and+ default = maybe @@ (
+            let+ _ = Lexemes.eq
+            and+ e = expect @@ ignore_newline @@ (expr ()) in e
+        ) in Node.Param.Optional {name; alias; default}
+
+    let block_named = 
+        let+ name = Lexemes.ident
+        and+ shape = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ shape = (Destruct.shape ()) in shape
+        ) in Node.Param.Named {name; shape}
+
+    let block_param ~expr = choice [block_optional ~expr; block_named]
+
+    let block ~expr = 
+        let semi = 
+            let+ _ = maybe newlines 
+            and+ _ = Lexemes.semi
+            and+ _ = maybe newlines in ()
+        in
+        let+ _ = Lexemes.open_block
+        and+ params = expect @@ ignore_newline @@ separated_by_with_traliing (
+            choice [ semi; newlines ]
+        ) (block_param ~expr)
+        and+ _ = expect @@ ignore_newline @@ Lexemes.close_block in
+        params
+
+    let extension = 
+        let+ _ = Lexemes.spread
+        and+ name = expect @@ Lexemes.ident
+        and+ type_ident = expect @@ (
+            let+ _ = Lexemes.colon
+            and+ type_ident = (Type.param_typ ()) in type_ident
+        ) in [Node.Param.Extension {name; type_ident}]
+
+    let single_block_param ~expr = 
+        let+ _ = Lexemes.open_paren
+        and+ param = expect @@ ignore_newline @@ (block_param ~expr)
+        and+ _ = expect @@ ignore_newline @@ Lexemes.close_paren in [param]
+
+    let optional = 
+        let+ name = Lexemes.ident
+        and+ _ = Lexemes.matc 
+        and+ alias = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ alias = Lexemes.ident in alias) 
+        in [Node.Param.Optional {name; alias; default = None}]
+
+    let named = 
+        let+ name = Lexemes.ident
+        and+ shape = maybe @@ (
+            let+ _ = Lexemes.colon
+            and+ shape = (Destruct.shape()) in shape) 
+        in [Node.Param.Named {name; shape}]
+
+    let non_positional ~expr = 
+        let+ _ = Lexemes.ampersand 
+        and+ value = choice [
+            block ~expr; extension; optional; named; single_block_param ~expr
+        ] in value
+
+
+    let positional_typed () = 
+        let+ name = Lexemes.lowercase_ident
+        and+ _ = expect @@ Lexemes.colon
+        and+ typ = expect @@ ignore_newline @@ (Type.param_typ ()) in
+        Node.FuncParam.(Positional (Name {name; typ}))
+
+
+    let rec positional_tuple() =
+        let shape_positional () = 
+            let+ name = Lexemes.lowercase_ident
+            and+ _ = expect @@ Lexemes.colon
+            and+ typ = expect @@ ignore_newline @@ (Type.typ' ()) in
+            (Node.FuncParam.Name {name; typ})
+        in
+        let+ _ = Lexemes.open_paren
+        and+ args = maybe @@ separated_by (ignore_newline @@ Lexemes.coma) 
+            (choicef [
+                (shape_positional);
+                (positional_tuple)
+            ]) 
+        and+ _ = expect @@ Lexemes.close_paren in
+        Node.FuncParam.(match args with
+        | None  -> Unit
+        | Some [] -> (Unit)
+        | Some (single :: []) -> single
+        | Some (multiple)  -> (Tuple (multiple)))
+
+    let positional = choicef [
+        positional_typed; 
+        (fun () -> map (positional_tuple()) (fun param -> Node.FuncParam.Positional param))
+    ]
+
+    let param ~expr: _ = choicef [
+        (fun () -> map positional (fun p -> [p]));
+        (* (fun () -> non_positional ~expr); *)
     ]
 end
 
@@ -809,11 +918,59 @@ and lambda () =
             block=b
         }
 
-let type_decl = 
-    let+ span = Lexemes.foreign in
-    `Typedef (Node.Typedef.Foreign span.range)
+and destruct_decl () =
+    let+ name = Lexemes.lowercase_ident 
+    and+ _ = Lexemes.eq
+    and+ ex = choicef [
+        (fun () -> map (block()) (fun v -> Node.Let.Block v));
+        (fun () -> map (expr()) (fun v -> Node.Let.Expr v));
+    ] in
 
-let rec typespace_name_decl = 
+    Node.Let.{
+        sig' = None;
+        range = Span.merge name.range (Node.Let.expr_range ex);
+        is_rec = false;
+        params = None;
+        (* TODO: name *)
+        ident = name;
+        expr = ex
+    }
+
+and func_decl () =
+    let+ name = Lexemes.lowercase_ident 
+    and+ params = one_more (
+        let+ _ = Lexemes.pipe
+        and+ ps = one_more (FuncParam.param ~expr) in 
+        ps
+    ) 
+    and+ _ = Lexemes.eq
+    and+ ex = choicef [
+        (fun () -> map (block()) (fun v -> Node.Func.Block v));
+        (fun () -> map (expr()) (fun v -> Node.Func.Expr v));
+    ] in
+    Node.Func.{
+        range = Span.merge name.range (Node.Func.expr_range ex);
+        is_rec = false;
+        (* TODO: why double flatten? *)
+        params = (Util.Lists.flatten @@ Util.Lists.flatten params);
+        (* TODO: s/ident/name *)
+        name = name;
+        expr = ex;
+        return = None;
+    }
+
+and namespace_decl () =
+    let+ _ = Lexemes.ident_of ["namespace"]
+    and+ _ = expect @@ ignore_newline @@ Lexemes.open_block
+    and+ entr = module_entries ()
+    and+ _ = expect @@ ignore_newline @@ Lexemes.close_block in
+    `Namespace entr
+
+and typespace_name_decl () = 
+    let type_decl = 
+        let+ span = Lexemes.foreign in
+        `Typedef (Node.Typedef.Foreign span.range)
+    in
     let type_params = 
         let+ _ = ignore_newline @@ Lexemes.pipe
         (* TODO: if it's uppercase, add meaningful error *)
@@ -823,8 +980,14 @@ let rec typespace_name_decl =
     let+ name = Lexemes.uppercase_ident
     and+ params = many @@ type_params
     and+ _ = expect @@ ignore_newline @@ Lexemes.eq
-    and+ value = expect ~exp: "TODO" @@ ignore_newline @@ choice [type_decl]
+    and+ value = expect ~exp: "TODO" @@ ignore_newline @@ choice [type_decl; namespace_decl ()]
     in match value with
+        | `Namespace entries -> Node.Module.Module Node.Module.{
+            range = Span.empty_range; (* TODO *)
+            keyword = Span.empty ();
+            name = name;
+            entries = entries
+        }
         | `Typedef def -> Node.Module.Typedef Node.Typedef.{
             name = name;
             params = List.join params;
@@ -838,7 +1001,9 @@ and module_entries () =
         (fun () -> map (let_()) (fun v -> Node.Module.Let v));
         (fun () -> map (using) (fun v -> Node.Module.Using v));
         (fun () -> map (modu ()) (fun m -> Node.Module.Module m));
-        (fun () -> typespace_name_decl);
+        (fun () -> typespace_name_decl ());
+        (fun () -> map (func_decl ()) (fun m -> Node.Module.Func m));
+        (fun () -> map (destruct_decl ()) (fun m -> Node.Module.Let m));
     ] in let separated_block_stmt = 
         let+ stmt = ignore_newline @@ (root_stmt ())
         and+ _ = maybe @@ Lexemes.stmt_separator in

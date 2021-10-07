@@ -448,4 +448,6 @@ let tests = [
     ("ast:named_params", Ast_test__named_params.tests);
     ("ast:list", Li.tests);
     ("ast:typedef", Ast_test__typedef.tests);
+    ("ast:namespace", Ast_test__namespace.tests);
+    ("ast:func", Ast_test__func.tests);
   ]

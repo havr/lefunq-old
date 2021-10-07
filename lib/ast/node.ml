@@ -111,7 +111,89 @@ module Destruct = struct
         | Tuple t -> branch [text "tuple"] (List.map t ~f: pretty_print)
 end
 
+
 module rec Dummy: sig end = struct end
+
+
+and FuncParam: sig 
+    type typed = {
+        name: Ident.t;
+        typ: Type.t;
+    }
+
+    type shape = | Unit | Name of typed | Tuple of shape list
+
+    type named_kind = | Typed of Type.t | Shaped of shape
+
+    type optinonal_kind = | WithDefault of Expr.t | Optional of Type.t
+
+    type t = 
+        | Positional of shape
+        | Named of {
+            name: Ident.t;
+            kind: named_kind;
+        }
+        | Optional of {
+            name: Ident.t;
+            kind: optinonal_kind;
+        }
+        | Extension of typed
+
+    val pp: t -> Pp.branch
+end = struct 
+    type typed = {
+        name: Ident.t;
+        typ: Type.t;
+    }
+
+    type shape = | Unit | Name of typed | Tuple of shape list
+
+    type named_kind = | Typed of Type.t | Shaped of shape
+
+    type optinonal_kind = | WithDefault of Expr.t | Optional of Type.t
+
+    type t = 
+        | Positional of shape
+        | Named of {
+            name: Ident.t;
+            kind: named_kind;
+        }
+        | Optional of {
+            name: Ident.t;
+            kind: optinonal_kind;
+        }
+        | Extension of typed
+
+
+    let pp = 
+    (* let open Common.Pp in  *)
+    (* let open Node.FnParam in  *)
+    let rec print_shape = Pp.(function
+        | Unit -> branch [text "()"] []
+        | Name n -> branch [spanned n.name] [Type.pretty_print n.typ]
+        | Tuple shs -> branch [text "tuple"] (List.map ~f: print_shape shs)
+    ) in
+    Pp.(function
+            | Positional sh -> print_shape sh
+            | Named p -> 
+                let value = (match p.kind with
+                  | Typed s -> [Type.pretty_print s]
+                  | Shaped sh -> [print_shape sh]
+                ) in 
+                branch [text "&"; spanned p.name] value
+            | Optional p ->
+                let value = (match p.kind with
+                  | WithDefault e -> [Expr.pretty_print e]
+                  | Optional typ -> [Type.pretty_print typ]
+                ) in 
+                branch [text "?"; spanned p.name] value
+            | Extension p ->
+                Pp.(branch [text "..."; spanned p.name] [
+                    Type.pretty_print p.typ
+                ])
+    )
+
+end
 
 and Param: sig 
     type t = 
@@ -226,6 +308,58 @@ end = struct
         branch [text "PARAMS"] (List.map n.params ~f: Param.pretty_print);
         (Block.pretty_print n.block)
     ])
+end
+and Func: sig 
+    type expr = 
+        | Expr of Expr.t
+        | Block of Block.t
+        | Foreign of unit
+
+    type t = {
+        range: Span.range;
+
+        name: Ident.t;
+        params: FuncParam.t list;
+        return: Type.t option;
+        expr: expr;
+        is_rec: bool
+    }
+
+    val expr_range: expr -> Span.range
+    val pp: t -> Pp.branch
+end = struct 
+    type expr = 
+        | Expr of Expr.t
+        | Block of Block.t
+        | Foreign of unit
+
+    type t = {
+        range: Span.range;
+
+        name: Ident.t;
+        params: FuncParam.t list;
+        return: Type.t option;
+        expr: expr;
+        is_rec: bool
+    }
+    let expr_range = function
+    | Expr e -> Expr.range e
+    | Block b -> b.range
+    | Foreign () -> Span.empty_range
+
+    let pp n = Pp.(
+        let pp_expr = match n.expr with
+            | Expr e -> Expr.pretty_print e
+            | Block b -> Block.pretty_print b
+            | Foreign _ -> branch [text "FOREIGN"] []
+        in
+        let head = if n.is_rec then [text "FUNC"; text "(rec)"] else [text "FUNC"]
+        in
+            branch (head @ [spanned n.name]) [
+                branch [text "PARAMS"] (List.map ~f: FuncParam.pp n.params);
+                pp_expr 
+            ]
+    )
 end
 and Let: sig
     type expr = 
@@ -473,6 +607,7 @@ end
 and Module: sig
     type entry = 
         | Let of Let.t 
+        | Func of Func.t 
         | Using of Using.t 
         | Module of Module.t 
         | Typedef of Typedef.t
@@ -489,6 +624,7 @@ and Module: sig
 end = struct 
     type entry = 
         | Let of Let.t 
+        | Func of Func.t 
         | Using of Using.t 
         | Module of Module.t 
         | Typedef of Typedef.t
@@ -502,6 +638,7 @@ end = struct
 
     let pp_entry = function
         | Let t -> Let.pretty_print t
+        | Func t -> Func.pp t
         | Using  i -> Using.pretty_print i
         | Module m -> Module.pretty_print m
         | Typedef t -> Typedef.pretty_print t

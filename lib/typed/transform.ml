@@ -254,6 +254,7 @@ and modu_entries = List.map ~f: (function
     | AstNode.Module.Typedef td -> Module.Typedef (typedef td)
     | AstNode.Module.Module m -> Module.Module (modu m)
     | AstNode.Module.Let t -> Module.Binding (binding t)
+    | AstNode.Module.Func _ ->  raise TODO
     | AstNode.Module.Using u -> Module.Using (using u)
 )
 

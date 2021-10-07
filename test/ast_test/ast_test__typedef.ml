@@ -3,7 +3,7 @@ open Ast_test__helpers
 open Ast.Node
 
 let old_test_case = test (Ast.Parser.Typedef.typedef) Typedef.pretty_print
-let new_test_case = test (Ast.Parser.typespace_name_decl) Module.pp_entry
+let new_test_case = test (Ast.Parser.typespace_name_decl ()) Module.pp_entry
 
 let old_tests = [
     "foreign", `Quick, (fun () -> old_test_case

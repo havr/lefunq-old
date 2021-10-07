@@ -1,7 +1,7 @@
 module Node = Node
 module Parser = Parser
 module Lexeme = Lexeme
-module Print = Print
+(* module Print = Print *)
 module Scanner = Scanner
 module Comb = Comb
 
