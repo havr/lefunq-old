@@ -67,6 +67,8 @@ let defs = [
         oneMore @@ char ";");
     ((fun _ -> Colon), 
         char ":");
+    ((fun _ -> PipeType), 
+        str "|:");
     ((fun _ -> Pipe), 
         char "|");
     ((fun _ -> OpenBlock), 

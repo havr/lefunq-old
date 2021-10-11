@@ -83,6 +83,35 @@ end = struct
         else_: Block.t option;
     }
 end
+and FuncParam: sig 
+    type value =
+        | Positional of {shape: Destruct.shape}
+        | Named of {given: string Span.t; shape: Destruct.shape}
+        | Optional of {given: string Span.t; scope: string; alias: string Span.t option; default: Expr.t option}
+        | Extension of {given: string Span.t}
+
+    type t = {
+        typ: Type.t;
+        value: value 
+    }
+
+    (* val names: t -> name list *)
+    val equals: t -> t -> bool
+    (* val name: string -> string -> name *)
+end = struct 
+    type value =
+        | Positional of {shape: Destruct.shape}
+        | Named of {given: string Span.t; shape: Destruct.shape}
+        | Optional of {given: string Span.t; scope: string; alias: string Span.t option; default: Expr.t option}
+        | Extension of {given: string Span.t}
+
+    type t = {
+        typ: Type.t;
+        value: value 
+    }
+
+    let equals a b = phys_equal a b
+end
 and Param: sig 
     type value =
         | Positional of {shape: Destruct.shape}
@@ -196,6 +225,31 @@ end = struct
         Symbol.Resolved.equal a.resolved b.resolved
         && (Symbol.Resolved.equal_path a.resolution b.resolution)
         && (Caml.(=) a.scheme b.scheme) *)
+end
+
+and Func: sig 
+    type t = {
+        range: Span.range;
+        given_name: string;
+        scope_name: string;
+        scheme: Type.scheme option;
+        is_rec: bool;
+        block: Block.t;
+        params: Param.t list;
+        result: Type.t;
+    }
+
+end = struct 
+    type t = {
+        range: Span.range;
+        given_name: string;
+        scope_name: string;
+        scheme: Type.scheme option;
+        is_rec: bool;
+        block: Block.t;
+        params: Param.t list;
+        result: Type.t;
+    }
 end
 
 and Let: sig 

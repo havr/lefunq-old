@@ -85,6 +85,7 @@ module Lexemes = struct
     let foreign = match_map(function | Foreign -> Some () | _ -> None)
     let modu = match_map(function | Module -> Some () | _ -> None)
     let pipe = match_map(function | Pipe -> Some () | _ -> None)
+    let pipeType = match_map(function | PipeType -> Some () | _ -> None)
     let spread = match_map(function | Spread -> Some () | _ -> None)
     (* TODO: s/matc/question *)
     let matc = match_map(function | Match -> Some () | _ -> None)
@@ -253,14 +254,13 @@ module Type = struct
             | items -> (Node.Type.Tuple { items })
         in Node.Type.List typ
 
-    and simple () =
+    and simple_noargs () =
         let+ id = Lexemes.ident
         (* TODO: don't allow id args *)
-        and+ args = many (param_typ ()) in
-        if is_ident_uppercase id.value then 
+        in if is_ident_uppercase id.value then 
             Node.Type.Simple {
                 name = id;
-                args = args; 
+                args = []; 
             }
         else Node.Type.Var {name = id}
     and lambda () =
@@ -284,8 +284,19 @@ module Type = struct
         | Some [n] -> n
         | Some items -> Node.Type.Tuple { items }
 
+    and simple () =
+        let+ id = Lexemes.ident
+        (* TODO: don't allow id args *)
+        and+ args = many (param_typ ()) in
+        if is_ident_uppercase id.value then 
+            Node.Type.Simple {
+                name = id;
+                args = args; 
+            }
+        else Node.Type.Var {name = id}
+
     and param_typ () = choicef [
-        (fun () -> simple ());
+        (fun () -> simple_noargs ());
         (fun () -> tuple ());
         (fun () -> list ());
     ]
@@ -411,6 +422,7 @@ module FuncParam = struct
         Node.FuncParam.(Positional (Name {name; typ}))
 
 
+    (* todo: proper expect-newlines *)
     let rec positional_tuple() =
         let shape_positional () = 
             let+ name = Lexemes.lowercase_ident
@@ -431,14 +443,47 @@ module FuncParam = struct
         | Some (single :: []) -> single
         | Some (multiple)  -> (Tuple (multiple)))
 
+    let named = 
+        let+ _ = Lexemes.ampersand
+        and+ name = Lexemes.lowercase_ident
+        and+ _ = Lexemes.colon
+        and+ kind = choicef [
+            (fun () -> map (positional_tuple()) (fun sh -> Node.FuncParam.Shaped sh));
+            (fun () -> map (Type.param_typ()) (fun typ -> Node.FuncParam.Typed typ))
+        ] in Node.FuncParam.Named {
+            name = name;
+            kind = kind;
+        }
+
+    let optional ~expr = 
+        let default = 
+            let+ _ = Lexemes.open_paren
+            and+ name = expect @@ ignore_newline @@ Lexemes.lowercase_ident
+            and+ _ = expect @@ ignore_newline @@ Lexemes.eq
+            and+ expr = expect @@ ignore_newline @@ expr 
+            and+ _ = expect @@ ignore_newline @@ Lexemes.close_paren in
+            Node.FuncParam.WithDefault {name; expr}
+        in
+        let+ _ = Lexemes.matc
+        and+ name = Lexemes.lowercase_ident
+        and+ _ = Lexemes.colon
+        and+ kind = choicef [
+            (fun () -> default);
+            (fun () -> map (Type.param_typ ()) (fun typ -> Node.FuncParam.WithType typ))
+        ] in Node.FuncParam.Optional {
+            name = name;
+            kind = kind;
+        }
+
     let positional = choicef [
         positional_typed; 
         (fun () -> map (positional_tuple()) (fun param -> Node.FuncParam.Positional param))
     ]
 
-    let param ~expr: _ = choicef [
+    let param ~expr = choicef [
         (fun () -> map positional (fun p -> [p]));
-        (* (fun () -> non_positional ~expr); *)
+        (fun () -> map named (fun p -> [p]));
+        (fun () -> map (optional ~expr) (fun p -> [p]));
     ]
 end
 
@@ -597,14 +642,6 @@ let rec value () = choice [
     map (list()) (fun v -> Node.Value.Li v);
     foreign
 ] 
-(*
-let x = struct &{
-    name: 10 &value
-}
-pun
-group
-value
-*)
 
 (* TODO: check if it's possible to swith monads to applicatives whenever it's possible *)
 and cond () =
@@ -940,8 +977,13 @@ and func_decl () =
     let+ name = Lexemes.lowercase_ident 
     and+ params = one_more (
         let+ _ = Lexemes.pipe
-        and+ ps = one_more (FuncParam.param ~expr) in 
+        and+ ps = one_more (FuncParam.param ~expr: (expr ())) in 
         ps
+    ) 
+    and+ return = maybe (
+        let+ _  = Lexemes.pipeType 
+        and+ typ = expect @@ ignore_newline @@ Type.typ'()
+            in typ
     ) 
     and+ _ = Lexemes.eq
     and+ ex = choicef [
@@ -956,7 +998,7 @@ and func_decl () =
         (* TODO: s/ident/name *)
         name = name;
         expr = ex;
-        return = None;
+        return = return;
     }
 
 and namespace_decl () =

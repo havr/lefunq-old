@@ -26,6 +26,7 @@ type t = Int of string
     | Foreign
     | Module
     | Pipe
+    | PipeType
     | Spread
     | Match
     | Ampersand
@@ -62,6 +63,7 @@ let to_string lexeme = match lexeme with
     | Foreign -> "foreign"
     | Module -> "module"
     | Pipe -> "|"
+    | PipeType -> "|:"
     | Match -> "?"
     | Spread -> ".."
     | Ampersand -> "&"

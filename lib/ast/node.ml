@@ -125,7 +125,10 @@ and FuncParam: sig
 
     type named_kind = | Typed of Type.t | Shaped of shape
 
-    type optinonal_kind = | WithDefault of Expr.t | Optional of Type.t
+    type optinonal_kind = | WithDefault of {
+        name: Ident.t;
+        expr: Expr.t
+    } | WithType of Type.t
 
     type t = 
         | Positional of shape
@@ -150,7 +153,10 @@ end = struct
 
     type named_kind = | Typed of Type.t | Shaped of shape
 
-    type optinonal_kind = | WithDefault of Expr.t | Optional of Type.t
+    type optinonal_kind = | WithDefault of {
+        name: Ident.t;
+        expr: Expr.t
+    } | WithType of Type.t
 
     type t = 
         | Positional of shape
@@ -183,8 +189,10 @@ end = struct
                 branch [text "&"; spanned p.name] value
             | Optional p ->
                 let value = (match p.kind with
-                  | WithDefault e -> [Expr.pretty_print e]
-                  | Optional typ -> [Type.pretty_print typ]
+                  | WithDefault e -> [
+                    branch [spanned e.name] [Expr.pretty_print e.expr]
+                  ]
+                  | WithType typ -> [Type.pretty_print typ]
                 ) in 
                 branch [text "?"; spanned p.name] value
             | Extension p ->
